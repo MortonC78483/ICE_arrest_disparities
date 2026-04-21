@@ -1,0 +1,123 @@
+---
+title: "287g_coverage"
+author: "Claire Morton"
+date: "2026-04-21"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(readr)
+library(dplyr)
+library(lubridate)
+library(ggplot2)
+library(tidycensus)
+```
+
+```{r, include = FALSE}
+cancelled <- read_csv("../../data/raw/Active287(g)Agreements_Listof CanceledAgreements_Table.csv")
+agree <- read_csv("../../data/raw/Active 287(g) Agreements_Untitled Page_Table.csv")
+state_pop_2024 <- get_estimates(
+  geography = "state",
+  product = "population",
+  year = 2024
+) %>%
+  mutate(NAME = toupper(NAME)) %>%
+  filter(variable == "POPESTIMATE") %>%
+  select(-c(GEOID, year, variable)) %>%
+  rename("STATE" = "NAME",
+         "state_pop" = "value")
+
+```
+
+Assess total people covered by agreements by state over time
+```{r, include = FALSE}
+coverage_type <- suppressWarnings(agree %>%
+  mutate(date = mdy(`ICE Signed Date`)) %>%
+  arrange(date) %>%
+  filter(!is.na(as.numeric(`Jurisdiction Population (2024 US Census ACS`))) %>%
+  group_by(`Program Type`, date) %>%
+  summarize(n_type = cumsum(`Jurisdiction Population (2024 US Census ACS`)) %>%
+  arrange(-n_type) %>%
+  slice(head(1)) %>%
+  dplyr::arrange(date, `Program Type`) %>% # coverage is number of people that day that got agreements
+  ungroup() %>%
+  group_by(`Program Type`) %>%
+  summarize(n_type = cumsum(n_type),
+            date = date))
+
+coverage_state <- suppressWarnings(agree %>%
+  mutate(date = mdy(`ICE Signed Date`)) %>%
+  arrange(date) %>%
+  filter(!is.na(as.numeric(`Jurisdiction Population (2024 US Census ACS`))) %>%
+  group_by(STATE, date) %>%
+  summarize(n_type = cumsum(`Jurisdiction Population (2024 US Census ACS`)) %>%
+  arrange(-n_type) %>%
+  slice(head(1)) %>%
+  dplyr::arrange(date, STATE) %>% # coverage is number of people that day that got agreements
+  ungroup() %>%
+  group_by(STATE) %>%
+  summarize(n_type = cumsum(n_type),
+            date = date))
+```
+
+Plotting number of people covered by 287g agreements by type and state. 
+
+Note that the coverage double counts (or triple, or quadruple) people who are covered by more than one agreement. This is why Florida has so many more people covered than its state population, for example.
+
+I did it this way because this was the most straightforward way to get exposure to 287g, since the dataset I have has each agreement and the number of people covered by it.
+
+```{r, echo = FALSE}
+ggplot(coverage_type, aes(x = date, y = n_type, 
+                     group = `Program Type`, 
+                     color = `Program Type`))+
+  geom_line()+
+  labs(x = "Date",
+       y = "Total People Covered\n(Double Counted if 2 agreements in same place)")+
+  theme_minimal()+
+  ggtitle("287g Coverage by Type")
+```
+
+
+```{r, echo = FALSE}
+ggplot(coverage_state, aes(x = date, y = n_type, 
+                     group = STATE))+
+  geom_line()+
+  geom_line(data = coverage_state %>% filter(STATE %in% c("TEXAS", "FLORIDA", "LOUISIANA")),
+            aes(x = date, y = n_type, 
+                     group = STATE, color = STATE))+
+  labs(x = "Date",
+       y = "Total People Covered\n(Double Counted if 2 agreements in same place)")+
+  theme_minimal()+
+  ggtitle("287g Coverage by State")
+```
+
+```{r, echo = FALSE}
+coverage_state_prop <- merge(coverage_state, state_pop_2024) %>%
+  mutate(prop_covered = n_type/state_pop)
+
+ggplot(coverage_state_prop, aes(x = date, y = prop_covered, 
+                     group = STATE))+
+  geom_line()+
+  geom_line(data = coverage_state_prop %>% filter(STATE %in% c("ARKANSAS", "FLORIDA", "LOUISIANA")),
+            aes(x = date, y = prop_covered, 
+                     group = STATE, color = STATE))+
+  labs(x = "Date",
+       y = "Total People Covered\n(Double Counted if 2 agreements in same place)")+
+  theme_minimal()+
+  ggtitle("287g Coverage as Proportion of 2024 State Population")
+```
+
+Does it look like we're having more 287g arrests in states with more 287g agreement coverage at the time of arrest?
+
+
+
+
+
+
+
+
+
+
+
+
