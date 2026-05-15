@@ -1,0 +1,300 @@
+---
+title: "287g_coverage"
+author: "Claire Morton"
+date: "2026-04-21"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(readr)
+library(dplyr)
+library(lubridate)
+library(ggplot2)
+library(tidycensus)
+library(arrow)
+library(tidyr)
+```
+
+```{r, include = FALSE}
+cancelled <- read_csv("../../data/raw/Active287(g)Agreements_Listof CanceledAgreements_Table.csv")
+agree <- read_csv("../../data/raw/Active 287(g) Agreements_Untitled Page_Table.csv")
+state_pop_2024 <- get_estimates(
+  geography = "state",
+  product = "population",
+  year = 2024
+) %>%
+  mutate(NAME = toupper(NAME)) %>%
+  filter(variable == "POPESTIMATE") %>%
+  select(-c(GEOID, year, variable)) %>%
+  rename("STATE" = "NAME",
+         "state_pop" = "value")
+
+```
+
+Assess total people covered by agreements by state over time
+```{r, include = FALSE}
+coverage_type <- suppressWarnings(agree %>%
+  mutate(date = mdy(`ICE Signed Date`)) %>%
+  arrange(date) %>%
+  filter(!is.na(as.numeric(`Jurisdiction Population (2024 US Census ACS`))) %>%
+  group_by(`Program Type`, date) %>%
+  summarize(n_type = cumsum(`Jurisdiction Population (2024 US Census ACS`)) %>%
+  arrange(-n_type) %>%
+  slice(head(1)) %>%
+  dplyr::arrange(date, `Program Type`) %>% # coverage is number of people that day that got agreements
+  ungroup() %>%
+  group_by(`Program Type`) %>%
+  summarize(n_type = cumsum(n_type),
+            date = date))
+
+coverage_state <- suppressWarnings(agree %>%
+  mutate(date = mdy(`ICE Signed Date`)) %>%
+  arrange(date) %>%
+  filter(!is.na(as.numeric(`Jurisdiction Population (2024 US Census ACS`))) %>%
+  group_by(STATE, date) %>%
+  summarize(n_type = cumsum(`Jurisdiction Population (2024 US Census ACS`)) %>%
+  arrange(-n_type) %>%
+  slice(head(1)) %>%
+  dplyr::arrange(date, STATE) %>% # coverage is number of people that day that got agreements
+  ungroup() %>%
+  group_by(STATE) %>%
+  summarize(n_type = cumsum(n_type),
+            date = date))
+```
+
+Plotting number of people covered by 287g agreements by type and state. 
+
+Note that the coverage double counts (or triple, or quadruple) people who are covered by more than one agreement. This is why Florida has so many more people covered than its state population, for example.
+
+I did it this way because this was the most straightforward way to get exposure to 287g, since the dataset I have has each agreement and the number of people covered by it.
+
+```{r, echo = FALSE}
+ggplot(coverage_type, aes(x = date, y = n_type, 
+                     group = `Program Type`, 
+                     color = `Program Type`))+
+  geom_step()+
+  labs(x = "Date",
+       y = "Total People Covered\n(Double Counted if 2 agreements in same place)")+
+  theme_minimal()+
+  ggtitle("287g Coverage by Type")
+```
+
+
+```{r, echo = FALSE}
+ggplot(coverage_state, aes(x = date, y = n_type, 
+                     group = STATE))+
+  geom_step()+
+  geom_step(data = coverage_state %>% filter(STATE %in% c("TEXAS", "FLORIDA", "LOUISIANA")),
+            aes(x = date, y = n_type, 
+                     group = STATE, color = STATE))+
+  labs(x = "Date",
+       y = "Total People Covered\n(Double Counted if 2 agreements in same place)")+
+  theme_minimal()+
+  ggtitle("287g Coverage by State")
+```
+
+```{r, echo = FALSE}
+coverage_state_prop <- merge(coverage_state, state_pop_2024) %>%
+  mutate(prop_covered = n_type/state_pop)
+
+ggplot(coverage_state_prop, aes(x = date, y = prop_covered, 
+                     group = STATE))+
+  geom_step()+
+  geom_step(data = coverage_state_prop %>% filter(STATE %in% c("ARKANSAS", "FLORIDA", "LOUISIANA")),
+            aes(x = date, y = prop_covered, 
+                     group = STATE, color = STATE))+
+  labs(x = "Date",
+       y = "Total People Covered\n(Double Counted if 2 agreements in same place)")+
+  theme_minimal()+
+  ggtitle("287g Coverage as Proportion of 2024 State Population")
+```
+
+Sanity check: Does it look like we're having more 287g arrests in states with more 287g agreement coverage at the time of arrest?
+
+Arrest state lines up reasonably well with AOR and will better allow us to join with the 287g data. 
+```{r, echo= FALSE}
+# load arrests data
+arrests <- read_parquet("../../data/raw/arrests-latest.parquet") %>%
+  filter(!is.na(unique_identifier))
+
+LEA_methods <- c("Anti-Smuggling", 
+                 "CAP Federal Incarceration", "CAP Local Incarceration", "CAP State Incarceration", "Criminal Alien Program", "Custodial Arrest", "ERO Reprocessed Arrest", "Law Enforcement Agency Response Unit", "Organized Crime Drug Enforcement Task Force", "Other Agency (turned over to INS)", "Other Task Force", "Patrol Border", "Patrol Interior", "Probation and Parole")
+
+program_287g <- c("287(g) Program")
+
+community_methods <- c("Located", "Non-Custodial Arrest", "Worksite Enforcement")
+
+other_methods <- c("Boat Patrol", "Crewman/Stoaway", "Foreign Fugitive", "Inspections", "Other efforts", "Presented During Inspection", "Traffic Check", "Transportation Check Aircraft", "Transportation Check Bus", "Transportation Check Passenger Train")
+
+arrests$method_class <- ifelse(arrests$apprehension_method %in% LEA_methods, "LEA", ifelse(arrests$apprehension_method %in% community_methods, "Community", ifelse(arrests$apprehension_method %in% program_287g, "287g", "Other")))
+
+table(as.factor(arrests$apprehension_aor), as.factor(arrests$apprehension_state))
+```
+
+
+Looking at Arkansas, Florida, and Louisiana, which had the highest proportion of 287g per population in March 2026.
+They also had slightly different times of ramping up their 287g programs in terms of people covered -- Florida, then Louisiana, then Arkansas.
+```{r, include = FALSE}
+plot_state_LEA_287g_prop <- function(target_state, arrest_data, coverage_data) {
+  # get state
+  state_arrests <- arrest_data %>%
+    filter(apprehension_state == toupper(target_state))
+  
+  state_coverage <- coverage_data %>%
+    filter(STATE == toupper(target_state)) %>%
+    select(date, prop_covered)
+  
+  # get daily
+  full_daily <- data.frame(
+    date = seq(min(min(state_coverage$date), min(state_arrests$apprehension_date)), max(state_arrests$apprehension_date), by = "day")
+  ) %>%
+    left_join(state_coverage, by = "date") %>%
+    arrange(date) %>%
+    fill(prop_covered, .direction = "down")
+  
+  # get weekly
+  weekly_sum <- state_arrests %>%
+    mutate(week = floor_date(apprehension_date, unit = "week")) %>%
+    group_by(week, method_class) %>%
+    summarise(weekly_count = n(), .groups = "drop") %>%
+    pivot_wider(names_from = method_class, 
+                values_from = weekly_count, 
+                values_fill = 0, 
+                names_prefix = "arrests_")
+
+  # merge
+  merged_weekly <- full_daily %>%
+    mutate(week = floor_date(date, unit = "week")) %>%
+    group_by(week) %>%
+    summarise(prop_covered = last(prop_covered), .groups = "drop") %>%
+    left_join(weekly_sum, by = "week") %>%
+    mutate(across(starts_with("arrests_"), ~replace_na(., 0)))
+  
+  # 2 axes scales
+  max_a <- max(merged_weekly$arrests_LEA + merged_weekly$arrests_287g, na.rm = TRUE)
+  max_p <- max(merged_weekly$prop_covered, na.rm = TRUE)
+
+  s_factor <- if(max_p > 0) max_a / max_p else 1
+  if(s_factor == 0) s_factor <- 1 
+  
+  # plot
+  p <- ggplot(merged_weekly, aes(x = week)) +
+    geom_line(aes(y = arrests_287g, color = "287g"), linewidth = 1) +
+    geom_line(aes(y = arrests_LEA + arrests_287g, color = "LEA"), linewidth = 1) +
+    #geom_line(aes(y = arrests_Community, color = "Community"), linewidth = 1) +
+    geom_step(aes(y = prop_covered * s_factor, color = "Prop Covered"), 
+              direction = "hv", linewidth = 0.8) +
+    scale_y_continuous(
+      name = "Number of Weekly Arrests",
+      sec.axis = sec_axis(~ . / s_factor, name = "Proportion Covered")
+    ) +
+    scale_color_manual(values = c("287g" = "lightgreen", "LEA" = "darkgreen", "Community" = "darkblue", "Prop Covered" = "red")) +
+    labs(title = paste("Weekly Arrests vs. Coverage Proportion:", target_state),
+         x = "Week",
+         color = "Metric") +
+    theme_minimal() +
+    theme(legend.position = "bottom")
+  
+  return(p)
+}
+```
+
+```{r, echo = FALSE}
+plot_state_LEA_287g_prop("FLORIDA", arrests, coverage_state_prop)
+plot_state_LEA_287g_prop("LOUISIANA", arrests, coverage_state_prop)
+plot_state_LEA_287g_prop("ARKANSAS", arrests, coverage_state_prop)
+```
+
+
+Plotting proprotion of arrestees with criminal convictions
+```{r, include = FALSE}
+plot_state_287g_convicted <- function(target_state, arrest_data, coverage_data) {
+  # get state
+  state_arrests <- arrest_data %>%
+    filter(apprehension_state == toupper(target_state)) %>%
+    mutate(convicted = ifelse(!is.na(case_criminality) & case_criminality == "1 Convicted Criminal", 1, 0))
+  
+  state_coverage <- coverage_data %>%
+    filter(STATE == toupper(target_state)) %>%
+    select(date, prop_covered)
+  
+  # get daily
+  full_daily <- data.frame(
+    date = seq(min(min(state_coverage$date), min(state_arrests$apprehension_date)), max(state_arrests$apprehension_date), by = "day")
+  ) %>%
+    left_join(state_coverage, by = "date") %>%
+    arrange(date) %>%
+    fill(prop_covered, .direction = "down")
+  
+  # get weekly
+  weekly_sum <- state_arrests %>%
+    mutate(week = floor_date(apprehension_date, unit = "week")) %>%
+    group_by(week, convicted) %>%
+    summarise(weekly_count = n(), .groups = "drop") %>%
+    pivot_wider(names_from = convicted, 
+                values_from = weekly_count, 
+                values_fill = 0, 
+                names_prefix = "arrests_") %>%
+    mutate(prop_convicted = arrests_1/(arrests_1+ arrests_0))
+  
+  # merge
+  merged_weekly <- full_daily %>%
+    mutate(week = floor_date(date, unit = "week")) %>%
+    group_by(week) %>%
+    summarise(prop_covered = last(prop_covered), .groups = "drop") %>%
+    left_join(weekly_sum, by = "week")
+  
+  # 2 axes scales
+  max_a <- max(merged_weekly$prop_convicted, na.rm = TRUE)
+  max_p <- max(merged_weekly$prop_covered, na.rm = TRUE)
+
+  s_factor <- if(max_p > 0) max_a / max_p else 1
+  if(s_factor == 0) s_factor <- 1 
+  
+  # plot
+  p <- ggplot(merged_weekly, aes(x = week)) +
+    geom_line(aes(y = prop_convicted, color = "Convicted"), linewidth = 1) +
+    #geom_line(aes(y = arrests_Community, color = "Community"), linewidth = 1) +
+    geom_step(aes(y = prop_covered * s_factor, color = "Prop Covered"), 
+              direction = "hv", linewidth = 0.8) +
+    scale_y_continuous(
+      name = "Proportion Arrests with Conviction",
+      sec.axis = sec_axis(~ . / s_factor, name = "Proportion Covered")
+    ) +
+    scale_color_manual(values = c("Convicted" = "darkblue", "Prop Covered" = "red")) +
+    labs(title = paste("287g Proportion State Covered, Prop Arrests with Conviction:", target_state),
+         x = "Week",
+         color = "Metric") +
+    theme_minimal() +
+    theme(legend.position = "bottom")
+  
+  return(p)
+}
+```
+
+```{r, echo = FALSE}
+plot_state_287g_convicted("FLORIDA", arrests, coverage_state_prop)
+plot_state_287g_convicted("LOUISIANA", arrests, coverage_state_prop)
+plot_state_287g_convicted("ARKANSAS", arrests, coverage_state_prop)
+```
+```{r}
+
+```
+
+```{r}
+
+```
+
+```{r}
+
+```
+
+```{r}
+
+```
+
+
+
+
+
