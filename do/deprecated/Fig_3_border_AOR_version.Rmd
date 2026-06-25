@@ -1,0 +1,515 @@
+---
+title: "Fig_3_border_AOR_version"
+author: "Claire Morton"
+date: "2026-06-12"
+output: html_document
+---
+
+We want to get the before and after arrest rate gap for border and non-border AORs.
+Border AORs: San Diego, Phoenix, El Paso, San Antonio, Harlingen
+Non-border AORs: All others
+This analysis will use the AOR arrest category, which doesn't always match with state in a way that makes sense.
+
+## TODO: Number of cases where state doesn't match city AOR
+
+```{r setup}
+library(ggplot2)
+library(dplyr)
+library(fixest)
+library(forcats)
+```
+
+## Functions
+```{r}
+aggregate_data <- function(data, 
+                           cols_to_keep, 
+                           pop_col,
+                           agg_noneuca = TRUE){
+  
+  
+  pop_cols <- c("pop_ACS", "pop_MPI")
+  
+  data_pop <- data %>% 
+    select(-setdiff(pop_cols, pop_col)) %>%
+    rename("pop" = !!sym(pop_col))
+  
+  raw_pop <- data_pop %>%
+    group_by(aor, region) %>%
+    summarize(pop = first(pop), .groups = "drop")
+  
+  # aggregate regions if reuqested
+  if(agg_noneuca){
+    data_pop <- data_pop %>% 
+      mutate(region = ifelse(region == "EUCA", "EUCA", "nonEUCA"))
+    
+    raw_pop <- raw_pop %>% 
+      mutate(region = ifelse(region == "EUCA", "EUCA", "nonEUCA")) %>%
+      group_by(aor, region) %>%
+      summarize(pop = sum(pop), .groups = "drop")
+  }
+  
+  # checksum value
+  checksum <- data_pop %>%
+    group_by(aor, region, pop) %>%
+    slice_head(n=1) %>%
+    ungroup() %>%
+    group_by(region) %>%
+    summarize(pop_checksum = sum(pop), .groups = "drop")
+  
+  # find geographic keys
+  geo_keys <- intersect(cols_to_keep, c("aor", "region"))
+  
+  # population map
+  pop_map <- data_pop %>%
+    group_by(aor, region, pop) %>%
+    slice_head(n = 1) %>%
+    ungroup() %>%
+    group_by_at(geo_keys) %>%
+    summarize(pop = sum(pop), .groups = "drop")
+  
+  # aggregate arrests, join population back in
+  data_pop <- data_pop %>%
+    group_by_at(cols_to_keep) %>%
+    summarize(n_arrests = sum(n_arrests, na.rm = TRUE), .groups = "drop") %>%
+    left_join(pop_map, by = geo_keys) %>%
+    mutate(ratio = n_arrests/pop*100000,
+           log_pop = log(pop))
+  
+  # checksum
+  total_aggregated <- data_pop %>%
+    group_by_at(geo_keys) %>%
+    summarize(pop = first(pop), .groups = "drop") %>%
+    pull(pop) %>%
+    sum(na.rm = TRUE)
+  total_checksum <- sum(checksum$pop_checksum, na.rm = TRUE)
+  if (!(dplyr::near(total_checksum, total_aggregated))) {
+    warning("Checksum Failed!")
+  }
+  
+  return(data_pop)
+}
+
+jackknife_supt <- function(fe_fit, model_fml, data, model_type = c("linear", "poisson"), extra_fml = NULL, do_se = TRUE) {
+  model_type <- match.arg(model_type)
+  coef0      <- coef(fe_fit)
+  aors     <- unique(data$aor)
+  n_aors   <- length(aors)
+
+  # Event-time labels (excludes reference period -1)
+  windows <- c(1)
+
+  if (do_se) {
+    # G x K matrix of leave-one-aor-out coefficients
+    jackknife_est_matrix <- t(sapply(aors, function(dropped_aor) {
+      sub_data <- subset(data, aor != dropped_aor)
+
+      if (model_type == "poisson") {
+        coef(fepois(model_fml, data = sub_data, offset = extra_fml, cluster = ~aor))
+      } else {
+        coef(feols(model_fml, data = sub_data, weights = extra_fml, cluster = ~aor))
+      }
+    }))
+
+    # TODO: Is this correct?
+    jackknife_mean <- mean(jackknife_est_matrix)
+    jackknife_var <- (n_aors -1 )/(n_aors) * sum( (jackknife_est_matrix - jackknife_mean)^2)
+    jackknife_se <- sqrt(jackknife_var)
+    
+    # TODO: critical value?
+    critical_value = 1.96
+    
+    # Apply exponential transformation if Poisson
+    if (model_type == "poisson") {
+      table_out <- tibble(window = windows,
+                     est    = exp(coef0), se = jackknife_se,
+                     lower  = exp(coef0 - critical_value * se),
+                     upper  = exp(coef0 + critical_value * se))
+    } else {
+      table_out <- tibble(window = windows,
+                     est    = coef0, 
+                     se = jackknife_se,
+                     lower  = coef0 - critical_value * se,
+                     upper  = coef0 + critical_value * se)
+    }
+  } else {
+    est_val <- if (model_type == "poisson") exp(coef0) else coef0
+    table_out    <- tibble(window = windows, est = est_val, se = 0, lower = est_val, upper = est_val)
+  }
+
+  # Add the reference period (-1 point) dynamically
+  table_out
+}
+
+fit_diffindiff <- function(data, model_fml, extra_fml, model_type = c("linear", "poisson"), do_se = TRUE) {
+  model_type  <- match.arg(model_type)
+  region_vals <- setdiff(unique(data$region), "EUCA")
+  region_coefs <- list()
+  
+  for (cur_region in region_vals) {
+    data_filtered <- data %>% filter(region %in% c("EUCA", cur_region))
+    
+    if (model_type == "poisson") {
+      mod <- fepois(model_fml, data_filtered, offset = extra_fml)
+    } else {
+      mod <- feols(model_fml, data_filtered, weights = extra_fml, cluster = ~aor)
+    }
+    
+    region_coefs[[cur_region]] <- jackknife_supt(
+      fe_fit    = mod, 
+      model_fml = model_fml, 
+      data      = data_filtered, 
+      model_type = model_type, 
+      extra_fml = extra_fml, 
+      do_se     = do_se
+    ) %>%
+      mutate(region = cur_region)
+  }
+  
+  return(bind_rows(region_coefs))
+}
+
+event_study_plot <- function(estimates,
+                             pal,
+                             baseline = 0) {
+  estimates |>
+    ggplot(aes(x = est, y = group, color = aor_group, group = aor_group)) +
+    geom_vline(xintercept = baseline, linetype = "dashed", color = "grey50") +
+    geom_point(size = 2.5) +
+    geom_errorbar(aes(xmin = lower, xmax = upper)) +
+    geom_line(linewidth = 0.8) +
+    labs(x = "Difference in Arrests per 100k\nrelative to EUCA and pre-Trump period",
+         y = "Group") +
+    theme_minimal()+
+    scale_color_manual(values = pal)
+}
+
+arrange_figure_3 <- function(trajectory, model_fml, wt_fml, model_type, do_se = T){
+  model_list = list()
+  for (cur_group in unique(trajectory$group)){
+    trajectory_filtered <- trajectory %>% filter(group == cur_group)
+    # once we have just that group, run the usual diff in diff with the SEs
+    res <- fit_diffindiff(
+        trajectory_filtered,
+        model_fml,
+        wt_fml,
+        model_type = model_type,
+        do_se = do_se
+      ) %>%
+        mutate(aor_group = cur_group)
+      
+    model_list[[cur_group]] = res
+  }
+  
+  model_list = bind_rows(model_list) %>%
+    mutate(group = aor_group)
+  event_study_plot(model_list, pal = pal_group, baseline = 1) +
+      labs(color = "AOR Group")
+}
+```
+
+## Figures
+
+Want to plot the before vs after EUCA vs non-EUCA difference, use AOR as the standard error jackknife instead of state.
+So just two bars, and 0.
+
+```{r setup_data, include = F}
+#### CONSTANTS ####
+model_fml <- as.formula(
+  paste0("ratio ~ i(window, region, ref = -1, ref2 = 'EUCA') | region + window")
+)
+wt_fml <- as.formula("~ pop")
+model_type = "linear"
+
+pois_model_fml <- as.formula(
+  paste0("n_arrests ~ i(window, region, ref = -1, ref2 = 'EUCA') | region + window")
+)
+offset_fml <- as.formula("~log_pop")
+
+groups = c("Border", "Non-border")
+pal_group <- c(setNames(scales::brewer_pal(palette = "Dark2")(4),groups))
+```
+
+
+```{r, main_figs, echo = F}
+trajectory <- read_csv("data/glm_trajectory_type_threatlevel_convicted_ACS_MPI_AOR.csv") 
+
+trajectory <- aggregate_data(trajectory, 
+                             c("region", "aor", "window"), 
+                             pop_col = "pop_MPI",
+                             agg_noneuca = T) %>%
+  mutate(window = ifelse(window >= 0, 1, -1)) %>%
+  select(-c(ratio, log_pop)) %>%
+  group_by(region, aor, window, pop) %>%
+  summarize(n_arrests = sum(n_arrests)) %>%
+  mutate(ratio = n_arrests/pop*100000,
+         log_pop = log(pop))
+
+trajectory <- trajectory %>%
+  mutate(group = ifelse(aor %in% c("San Diego", "Phoenix", "El Paso", "San Antonio", "Harlingen"), "Border", "Non-border"))
+  
+model_type = "poisson"
+mult_denom <- arrange_figure_3(trajectory, pois_model_fml, offset_fml, model_type, do_se = T)+
+  ggtitle("Multiplicative", subtitle = "Border = San Diego, Phoenix, El Paso, San Antonio, Harlingen")
+
+effects <- trajectory %>%
+  ungroup() %>%
+  filter(window == -1) %>%
+  select(region, aor, ratio) %>%
+  rename("pre_ratio" = ratio) %>%
+  merge(trajectory) %>%
+  filter(window == 1) %>%
+  mutate(effect = ratio/pre_ratio) %>%
+  arrange(effect)
+
+diffindiff_effects <- effects %>%
+  filter(region == "EUCA") %>%
+  select(aor, effect) %>%
+  rename("euca_effect" = effect) %>%
+  merge(effects) %>%
+  filter(region == "nonEUCA") %>%
+  mutate(effect = effect/euca_effect) %>%
+  mutate(aor = fct_reorder(aor, desc(effect)))
+
+mult_effects <- ggplot(diffindiff_effects, aes(y = aor, x = effect, fill = group)) +
+  geom_bar(stat = "identity") +
+  geom_vline(xintercept = 1)+
+  ggtitle("Multiplicative")
+```
+
+```{r, main_figs, echo = F}
+trajectory <- read_csv("data/glm_trajectory_type_threatlevel_convicted_ACS_MPI_AOR.csv") 
+
+trajectory <- aggregate_data(trajectory, 
+                             c("region", "aor", "window"), 
+                             pop_col = "pop_ACS",
+                             agg_noneuca = T) %>%
+  mutate(window = ifelse(window >= 0, 1, -1)) %>%
+  select(-c(ratio, log_pop)) %>%
+  group_by(region, aor, window, pop) %>%
+  summarize(n_arrests = sum(n_arrests)) %>%
+  mutate(ratio = n_arrests/pop*100000)
+
+trajectory <- trajectory %>%
+  mutate(group = ifelse(aor %in% c("San Diego", "Phoenix", "El Paso", "San Antonio", "Harlingen"), "Border", "Non-border"))
+model_type = "linear"
+acs_denom <- arrange_figure_3(trajectory, model_fml, wt_fml, model_type, do_se = T)+
+  ggtitle("ACS Denom", subtitle = "Border = San Diego, Phoenix, El Paso, San Antonio, Harlingen")
+
+effects <- trajectory %>%
+  ungroup() %>%
+  filter(window == -1) %>%
+  select(region, aor, ratio) %>%
+  rename("pre_ratio" = ratio) %>%
+  merge(trajectory) %>%
+  filter(window == 1) %>%
+  mutate(effect = ratio - pre_ratio) %>%
+  arrange(effect)
+
+diffindiff_effects <- effects %>%
+  filter(region == "EUCA") %>%
+  select(aor, effect) %>%
+  rename("euca_effect" = effect) %>%
+  merge(effects) %>%
+  filter(region == "nonEUCA") %>%
+  mutate(effect = effect-euca_effect) %>%
+  mutate(aor = fct_reorder(aor, desc(effect)))
+
+acs_effects <- ggplot(diffindiff_effects, aes(y = aor, x = effect, fill = group)) +
+  geom_bar(stat = "identity") +
+  ggtitle("ACS")
+```
+
+```{r}
+trajectory <- read_csv("data/glm_trajectory_type_threatlevel_convicted_ACS_MPI_AOR.csv") 
+
+trajectory <- aggregate_data(trajectory, 
+                             c("region", "aor", "window"), 
+                             pop_col = "pop_MPI",
+                             agg_noneuca = T) %>%
+  mutate(window = ifelse(window >= 0, 1, -1)) %>%
+  select(-c(ratio, log_pop)) %>%
+  group_by(region, aor, window, pop) %>%
+  summarize(n_arrests = sum(n_arrests)) %>%
+  mutate(ratio = n_arrests/pop*100000)
+
+trajectory <- trajectory %>%
+  mutate(group = ifelse(aor %in% c("San Diego", "Phoenix", "El Paso", "San Antonio", "Harlingen"), "Border", "Non-border"))
+  
+mpi_denom <- arrange_figure_3(trajectory, model_fml, wt_fml, model_type, do_se = T)+
+  ggtitle("MPI Denom", subtitle = "Border = San Diego, Phoenix, El Paso, San Antonio, Harlingen")
+
+effects <- trajectory %>%
+  ungroup() %>%
+  filter(window == -1) %>%
+  select(region, aor, ratio) %>%
+  rename("pre_ratio" = ratio) %>%
+  merge(trajectory) %>%
+  filter(window == 1) %>%
+  mutate(effect = ratio - pre_ratio) %>%
+  arrange(effect)
+
+diffindiff_effects <- effects %>%
+  filter(region == "EUCA") %>%
+  select(aor, effect) %>%
+  rename("euca_effect" = effect) %>%
+  merge(effects) %>%
+  filter(region == "nonEUCA") %>%
+  mutate(effect = effect-euca_effect) %>%
+  mutate(aor = fct_reorder(aor, desc(effect)))
+
+mpi_effects <- ggplot(diffindiff_effects, aes(y = aor, x = effect, fill = group)) +
+  geom_bar(stat = "identity")+
+  ggtitle("MPI")
+```
+
+```{r}
+ggarrange(mpi_denom, acs_denom)
+ggarrange(mpi_effects, acs_effects)
+ggarrange(mult_denom, mult_effects)
+```
+
+
+```{r, mult_figs_ca, echo = F}
+trajectory <- read_csv("data/glm_trajectory_type_threatlevel_convicted_ACS_MPI_AOR.csv") %>%
+  filter(method == "CA")
+
+model_type = "poisson"
+ 
+trajectory <- aggregate_data(trajectory, 
+                             c("region", "aor", "window"), 
+                             pop_col = "pop_MPI",
+                             agg_noneuca = T) %>%
+  mutate(window = ifelse(window >= 0, 1, -1)) %>%
+  select(-c(ratio, log_pop)) %>%
+  group_by(region, aor, window, pop) %>%
+  summarize(n_arrests = sum(n_arrests)) %>%
+  mutate(ratio = n_arrests/pop*100000,
+         log_pop = log(pop))
+
+trajectory <- trajectory %>%
+  mutate(group = ifelse(aor %in% c("San Diego", "Phoenix", "El Paso", "San Antonio", "Harlingen"), "Border", "Non-border"))
+  
+model_type = "poisson"
+mult_denom <- arrange_figure_3(trajectory, pois_model_fml, offset_fml, model_type, do_se = T)+
+  ggtitle("Multiplicative Community Arrests", subtitle = "Border = San Diego, Phoenix, El Paso, San Antonio, Harlingen")
+
+effects <- trajectory %>%
+  ungroup() %>%
+  filter(window == -1) %>%
+  select(region, aor, ratio) %>%
+  rename("pre_ratio" = ratio) %>%
+  merge(trajectory) %>%
+  filter(window == 1) %>%
+  mutate(effect = ratio/pre_ratio) %>%
+  arrange(effect)
+
+diffindiff_effects <- effects %>%
+  filter(region == "EUCA") %>%
+  select(aor, effect) %>%
+  rename("euca_effect" = effect) %>%
+  merge(effects) %>%
+  filter(region == "nonEUCA") %>%
+  mutate(effect = effect/euca_effect) %>%
+  mutate(aor = fct_reorder(aor, desc(effect)))
+
+mult_effects <- ggplot(diffindiff_effects, aes(y = aor, x = effect, fill = group)) +
+  geom_bar(stat = "identity") +
+  geom_vline(xintercept = 1)+
+  ggtitle("Multiplicative Community Arrests")
+```
+
+```{r, main_figs_ca, echo = F}
+trajectory <- read_csv("data/glm_trajectory_type_threatlevel_convicted_ACS_MPI_AOR.csv")  %>%
+  filter(method == "CA")
+
+model_type = "linear"
+
+trajectory <- aggregate_data(trajectory, 
+                             c("region", "aor", "window"), 
+                             pop_col = "pop_ACS",
+                             agg_noneuca = T) %>%
+  mutate(window = ifelse(window >= 0, 1, -1)) %>%
+  select(-c(ratio, log_pop)) %>%
+  group_by(region, aor, window, pop) %>%
+  summarize(n_arrests = sum(n_arrests)) %>%
+  mutate(ratio = n_arrests/pop*100000)
+
+trajectory <- trajectory %>%
+  mutate(group = ifelse(aor %in% c("San Diego", "Phoenix", "El Paso", "San Antonio", "Harlingen"), "Border", "Non-border"))
+  
+acs_denom <- arrange_figure_3(trajectory, model_fml, wt_fml, model_type, do_se = T)+
+  ggtitle("ACS Denom Community Arrests", subtitle = "Border = San Diego, Phoenix, El Paso, San Antonio, Harlingen")
+
+effects <- trajectory %>%
+  ungroup() %>%
+  filter(window == -1) %>%
+  select(region, aor, ratio) %>%
+  rename("pre_ratio" = ratio) %>%
+  merge(trajectory) %>%
+  filter(window == 1) %>%
+  mutate(effect = ratio - pre_ratio) %>%
+  arrange(effect)
+
+diffindiff_effects <- effects %>%
+  filter(region == "EUCA") %>%
+  select(aor, effect) %>%
+  rename("euca_effect" = effect) %>%
+  merge(effects) %>%
+  filter(region == "nonEUCA") %>%
+  mutate(effect = effect-euca_effect) %>%
+  mutate(aor = fct_reorder(aor, desc(effect)))
+
+acs_effects <- ggplot(diffindiff_effects, aes(y = aor, x = effect, fill = group)) +
+  geom_bar(stat = "identity") +
+  ggtitle("ACS Community Arrests")
+```
+
+```{r, figs_ca, echo = F}
+trajectory <- read_csv("data/glm_trajectory_type_threatlevel_convicted_ACS_MPI_AOR.csv")  %>%
+  filter(method == "CA")
+
+trajectory <- aggregate_data(trajectory, 
+                             c("region", "aor", "window"), 
+                             pop_col = "pop_MPI",
+                             agg_noneuca = T) %>%
+  mutate(window = ifelse(window >= 0, 1, -1)) %>%
+  select(-c(ratio, log_pop)) %>%
+  group_by(region, aor, window, pop) %>%
+  summarize(n_arrests = sum(n_arrests)) %>%
+  mutate(ratio = n_arrests/pop*100000)
+
+trajectory <- trajectory %>%
+  mutate(group = ifelse(aor %in% c("San Diego", "Phoenix", "El Paso", "San Antonio", "Harlingen"), "Border", "Non-border"))
+  
+mpi_denom <- arrange_figure_3(trajectory, model_fml, wt_fml, model_type, do_se = T)+
+  ggtitle("MPI Denom Community Arrests", subtitle = "Border = San Diego, Phoenix, El Paso, San Antonio, Harlingen")
+
+effects <- trajectory %>%
+  ungroup() %>%
+  filter(window == -1) %>%
+  select(region, aor, ratio) %>%
+  rename("pre_ratio" = ratio) %>%
+  merge(trajectory) %>%
+  filter(window == 1) %>%
+  mutate(effect = ratio - pre_ratio) %>%
+  arrange(effect)
+
+diffindiff_effects <- effects %>%
+  filter(region == "EUCA") %>%
+  select(aor, effect) %>%
+  rename("euca_effect" = effect) %>%
+  merge(effects) %>%
+  filter(region == "nonEUCA") %>%
+  mutate(effect = effect-euca_effect) %>%
+  mutate(aor = fct_reorder(aor, desc(effect)))
+
+mpi_effects <- ggplot(diffindiff_effects, aes(y = aor, x = effect, fill = group)) +
+  geom_bar(stat = "identity")+
+  ggtitle("MPI Community Arrests")
+```
+
+```{r}
+ggarrange(mpi_denom, acs_denom)
+ggarrange(mpi_effects, acs_effects)
+ggarrange(mult_denom, mult_effects)
+```

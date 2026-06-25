@@ -1,0 +1,293 @@
+---
+title: "indiv_region_increases"
+author: "Claire Morton"
+date: "2026-06-24"
+output:
+  pdf_document: default
+  html_document: default
+---
+
+This script test whether non-EUCA per-capita arrest rates rose more than EUCA per-capita rates in all states and AORs and with all denominators
+
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(haven)
+library(lubridate)
+library(readr)
+library(dplyr)
+library(tidyr)
+library(ggplot2)
+library(ggrepel)
+library(scales)
+```
+
+```{r}
+aggregate_data <- function(data, 
+                           cols_to_keep, 
+                           pop_col,
+                           agg_noneuca = TRUE){
+  
+  
+  pop_cols <- c("pop_ACS", "pop_MPI")
+  
+  data_pop <- data %>% 
+    select(-setdiff(pop_cols, pop_col)) %>%
+    rename("pop" = !!sym(pop_col))
+  
+  raw_pop <- data_pop %>%
+    group_by(aor, region) %>%
+    summarize(pop = first(pop), .groups = "drop")
+  
+  # aggregate regions if reuqested
+  if(agg_noneuca){
+    data_pop <- data_pop %>% 
+      mutate(region = ifelse(region == "EUCA", "EUCA", "nonEUCA"))
+    
+    raw_pop <- raw_pop %>% 
+      mutate(region = ifelse(region == "EUCA", "EUCA", "nonEUCA")) %>%
+      group_by(aor, region) %>%
+      summarize(pop = sum(pop), .groups = "drop")
+  }
+  
+  # checksum value
+  checksum <- data_pop %>%
+    group_by(aor, region, pop) %>%
+    slice_head(n=1) %>%
+    ungroup() %>%
+    group_by(region) %>%
+    summarize(pop_checksum = sum(pop), .groups = "drop")
+  
+  # find geographic keys
+  geo_keys <- intersect(cols_to_keep, c("aor", "region"))
+  
+  # population map
+  pop_map <- data_pop %>%
+    group_by(aor, region, pop) %>%
+    slice_head(n = 1) %>%
+    ungroup() %>%
+    group_by_at(geo_keys) %>%
+    summarize(pop = sum(pop), .groups = "drop")
+  
+  # aggregate arrests, join population back in
+  data_pop <- data_pop %>%
+    group_by_at(cols_to_keep) %>%
+    summarize(n_arrests = sum(n_arrests, na.rm = TRUE), .groups = "drop") %>%
+    left_join(pop_map, by = geo_keys) %>%
+    mutate(ratio = n_arrests/pop*1000,
+           log_pop = log(pop))
+  
+  # checksum
+  total_aggregated <- data_pop %>%
+    group_by_at(geo_keys) %>%
+    summarize(pop = first(pop), .groups = "drop") %>%
+    pull(pop) %>%
+    sum(na.rm = TRUE)
+  total_checksum <- sum(checksum$pop_checksum, na.rm = TRUE)
+  if (!(dplyr::near(total_checksum, total_aggregated))) {
+    warning("Checksum Failed!")
+  }
+  
+  return(data_pop)
+}
+```
+
+MPI, AOR
+```{r}
+trajectory <- read_csv("../data/glm_trajectory_type_threatlevel_convicted_ACS_MPI_AOR.csv") %>%
+  #filter(method == "CA" & convicted == 1) 
+  #filter(method == "CA" & convicted == 0) 
+  #filter(method == "LEA" & convicted == 1)
+  filter(method == "LEA" & convicted == 0)
+
+trajectory_agg <- aggregate_data(trajectory, c("region", "aor", "window"), "pop_MPI", TRUE) %>%
+  mutate(window = ifelse(window < 0, -1, 0)) %>%
+  group_by(window, region, aor, pop) %>%
+  summarize(n_arrests = sum(n_arrests)) %>%
+  mutate(ratio = n_arrests/pop *1000)
+
+trajectory_agg_euca <- trajectory_agg %>%
+  filter(region == "EUCA") %>%
+  pivot_wider(id_cols = aor, names_from = window, values_from = ratio) %>%
+  mutate(diff_euca = `0`-`-1`) %>%
+  mutate(region = "EUCA") %>%
+  select(diff_euca, aor)
+
+trajectory_agg %>%
+  filter(region == "nonEUCA") %>%
+  pivot_wider(id_cols = aor, names_from = window, values_from = ratio) %>%
+  mutate(diff_noneuca = `0`-`-1`) %>%
+  mutate(region = "Non-EUCA") %>%
+  select(diff_noneuca, aor) %>%
+  merge(trajectory_agg_euca) %>%
+  mutate(diff = diff_noneuca - diff_euca) %>%
+  arrange(diff)
+```
+
+ACS, AOR
+```{r}
+trajectory <- read_csv("../data/glm_trajectory_type_threatlevel_convicted_ACS_MPI_AOR.csv") %>%
+  #filter(method == "CA" & convicted == 1) 
+  #filter(method == "CA" & convicted == 0) 
+  #filter(method == "LEA" & convicted == 1)
+  filter(method == "LEA" & convicted == 0)
+  
+trajectory_agg <- aggregate_data(trajectory, c("region", "aor", "window"), "pop_ACS", TRUE) %>%
+  mutate(window = ifelse(window < 0, -1, 0)) %>%
+  group_by(window, region, aor, pop) %>%
+  summarize(n_arrests = sum(n_arrests)) %>%
+  mutate(ratio = n_arrests/pop *1000)
+
+trajectory_agg_euca <- trajectory_agg %>%
+  filter(region == "EUCA") %>%
+  pivot_wider(id_cols = aor, names_from = window, values_from = ratio) %>%
+  mutate(diff_euca = `0`-`-1`) %>%
+  mutate(region = "EUCA") %>%
+  select(diff_euca, aor)
+
+trajectory_agg %>%
+  filter(region == "nonEUCA") %>%
+  pivot_wider(id_cols = aor, names_from = window, values_from = ratio) %>%
+  mutate(diff_noneuca = `0`-`-1`) %>%
+  mutate(region = "Non-EUCA") %>%
+  select(diff_noneuca, aor) %>%
+  merge(trajectory_agg_euca) %>%
+  mutate(diff = diff_noneuca - diff_euca) %>%
+  arrange(diff)
+```
+
+```{r}
+
+aggregate_data <- function(data, 
+                           cols_to_keep, 
+                           pop_col,
+                           agg_noneuca = TRUE){
+  
+  
+  pop_cols <- c("pop_ACS", "pop_MPI")
+  
+  data_pop <- data %>% 
+    select(-setdiff(pop_cols, pop_col)) %>%
+    rename("pop" = !!sym(pop_col))
+  
+  raw_pop <- data_pop %>%
+    group_by(state, region) %>%
+    summarize(pop = first(pop), .groups = "drop")
+  
+  # aggregate regions if reuqested
+  if(agg_noneuca){
+    data_pop <- data_pop %>% 
+      mutate(region = ifelse(region == "EUCA", "EUCA", "nonEUCA"))
+    
+    raw_pop <- raw_pop %>% 
+      mutate(region = ifelse(region == "EUCA", "EUCA", "nonEUCA")) %>%
+      group_by(state, region) %>%
+      summarize(pop = sum(pop), .groups = "drop")
+  }
+  
+  # checksum value
+  checksum <- data_pop %>%
+    group_by(state, region, pop) %>%
+    slice_head(n=1) %>%
+    ungroup() %>%
+    group_by(region) %>%
+    summarize(pop_checksum = sum(pop), .groups = "drop")
+  
+  # find geographic keys
+  geo_keys <- intersect(cols_to_keep, c("state", "region"))
+  
+  # population map
+  pop_map <- data_pop %>%
+    group_by(state, region, pop) %>%
+    slice_head(n = 1) %>%
+    ungroup() %>%
+    group_by_at(geo_keys) %>%
+    summarize(pop = sum(pop), .groups = "drop")
+  
+  # aggregate arrests, join population back in
+  data_pop <- data_pop %>%
+    group_by_at(cols_to_keep) %>%
+    summarize(n_arrests = sum(n_arrests, na.rm = TRUE), .groups = "drop") %>%
+    left_join(pop_map, by = geo_keys) %>%
+    mutate(ratio = n_arrests/pop*1000,
+           log_pop = log(pop))
+  
+  # checksum
+  total_aggregated <- data_pop %>%
+    group_by_at(geo_keys) %>%
+    summarize(pop = first(pop), .groups = "drop") %>%
+    pull(pop) %>%
+    sum(na.rm = TRUE)
+  total_checksum <- sum(checksum$pop_checksum, na.rm = TRUE)
+  if (!(dplyr::near(total_checksum, total_aggregated))) {
+    warning("Checksum Failed!")
+  }
+  
+  return(data_pop)
+}
+
+```
+
+MPI, state
+```{r}
+trajectory <- read_csv("../data/glm_trajectory_type_threatlevel_convicted_ACS_MPI.csv") %>%
+  #filter(method == "CA" & convicted == 1) 
+  #filter(method == "CA" & convicted == 0) 
+  #filter(method == "LEA" & convicted == 1)
+  filter(method == "LEA" & convicted == 0)
+
+trajectory_agg <- aggregate_data(trajectory, c("region", "state", "window"), "pop_MPI", TRUE) %>%
+  mutate(window = ifelse(window < 0, -1, 0)) %>%
+  group_by(window, region, state, pop) %>%
+  summarize(n_arrests = sum(n_arrests)) %>%
+  mutate(ratio = n_arrests/pop *1000)
+
+trajectory_agg_euca <- trajectory_agg %>%
+  filter(region == "EUCA") %>%
+  pivot_wider(id_cols = state, names_from = window, values_from = ratio) %>%
+  mutate(diff_euca = `0`-`-1`) %>%
+  mutate(region = "EUCA") %>%
+  select(diff_euca, state)
+
+trajectory_agg %>%
+  filter(region == "nonEUCA") %>%
+  pivot_wider(id_cols = state, names_from = window, values_from = ratio) %>%
+  mutate(diff_noneuca = `0`-`-1`) %>%
+  mutate(region = "Non-EUCA") %>%
+  select(diff_noneuca, state) %>%
+  merge(trajectory_agg_euca) %>%
+  mutate(diff = diff_noneuca - diff_euca) %>%
+  arrange(diff)
+```
+
+ACS, state
+```{r}
+trajectory <- read_csv("../data/glm_trajectory_type_threatlevel_convicted_ACS_MPI.csv")  %>%
+  #filter(method == "CA" & convicted == 1) 
+  #filter(method == "CA" & convicted == 0) 
+  #filter(method == "LEA" & convicted == 1)
+  filter(method == "LEA" & convicted == 0)
+
+trajectory_agg <- aggregate_data(trajectory, c("region", "state", "window"), "pop_ACS", TRUE) %>%
+  mutate(window = ifelse(window < 0, -1, 0)) %>%
+  group_by(window, region, state, pop) %>%
+  summarize(n_arrests = sum(n_arrests)) %>%
+  mutate(ratio = n_arrests/pop *1000)
+
+trajectory_agg_euca <- trajectory_agg %>%
+  filter(region == "EUCA") %>%
+  pivot_wider(id_cols = state, names_from = window, values_from = ratio) %>%
+  mutate(diff_euca = `0`-`-1`) %>%
+  mutate(region = "EUCA") %>%
+  select(diff_euca, state)
+
+trajectory_agg %>%
+  filter(region == "nonEUCA") %>%
+  pivot_wider(id_cols = state, names_from = window, values_from = ratio) %>%
+  mutate(diff_noneuca = `0`-`-1`) %>%
+  mutate(region = "Non-EUCA") %>%
+  select(diff_noneuca, state) %>%
+  merge(trajectory_agg_euca) %>%
+  mutate(diff = diff_noneuca - diff_euca) %>%
+  arrange(diff)
+```

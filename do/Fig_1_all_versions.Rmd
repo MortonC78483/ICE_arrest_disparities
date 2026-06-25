@@ -1,0 +1,535 @@
+---
+title: "Fig_1_all_versions"
+author: "Claire Morton"
+date: "2026-06-10"
+output:
+  pdf_document: default
+  html_document: default
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(broom)
+library(dplyr)
+library(tidyr)
+library(stringr)
+library(ggplot2)
+library(ggpubr)
+library(fixest)
+library(mvtnorm)
+library(patchwork)
+library(readr)
+library(HonestDiD)
+```
+ 
+## Functions
+```{r functions, include = F}
+aggregate_data <- function(data, 
+                           cols_to_keep, 
+                           pop_col,
+                           agg_noneuca = TRUE){
+  
+  
+  pop_cols <- c("pop_ACS", "pop_MPI")
+  
+  data_pop <- data %>% 
+    select(-setdiff(pop_cols, pop_col)) %>%
+    rename("pop" = !!sym(pop_col))
+  
+  raw_pop <- data_pop %>%
+    group_by(state, region) %>%
+    summarize(pop = first(pop), .groups = "drop")
+  
+  # aggregate regions if reuqested
+  if(agg_noneuca){
+    data_pop <- data_pop %>% 
+      mutate(region = ifelse(region == "EUCA", "EUCA", "nonEUCA"))
+    
+    raw_pop <- raw_pop %>% 
+      mutate(region = ifelse(region == "EUCA", "EUCA", "nonEUCA")) %>%
+      group_by(state, region) %>%
+      summarize(pop = sum(pop), .groups = "drop")
+  }
+  
+  # checksum value
+  checksum <- data_pop %>%
+    group_by(state, region, pop) %>%
+    slice_head(n=1) %>%
+    ungroup() %>%
+    group_by(region) %>%
+    summarize(pop_checksum = sum(pop), .groups = "drop")
+  
+  # find geographic keys
+  geo_keys <- intersect(cols_to_keep, c("state", "region"))
+  
+  # population map
+  pop_map <- data_pop %>%
+    group_by(state, region, pop) %>%
+    slice_head(n = 1) %>%
+    ungroup() %>%
+    group_by_at(geo_keys) %>%
+    summarize(pop = sum(pop), .groups = "drop")
+  
+  # aggregate arrests, join population back in
+  data_pop <- data_pop %>%
+    group_by_at(cols_to_keep) %>%
+    summarize(n_arrests = sum(n_arrests, na.rm = TRUE), .groups = "drop") %>%
+    left_join(pop_map, by = geo_keys) %>%
+    mutate(ratio = n_arrests/pop*1000,
+           log_pop = log(pop))
+  
+  # checksum
+  total_aggregated <- data_pop %>%
+    group_by_at(geo_keys) %>%
+    summarize(pop = first(pop), .groups = "drop") %>%
+    pull(pop) %>%
+    sum(na.rm = TRUE)
+  total_checksum <- sum(checksum$pop_checksum, na.rm = TRUE)
+  if (!(dplyr::near(total_checksum, total_aggregated))) {
+    warning("Checksum Failed!")
+  }
+  
+  return(data_pop)
+}
+
+jackknife_supt <- function(fe_fit, model_fml, data, model_type = c("linear", "poisson"), extra_fml = NULL, do_se = TRUE, do_sensitivity = F) {
+  model_type <- match.arg(model_type)
+  coef0      <- coef(fe_fit)
+  states     <- unique(data$state)
+  n_states   <- length(states)
+
+  windows <- setdiff(min(as.numeric(as.character(data$window))):max(as.numeric(as.character(data$window))), -1)
+
+  if (do_se) {
+    jackknife_est_matrix <- t(sapply(states, function(dropped_state) {
+      sub_data <- subset(data, state != dropped_state)
+
+      if (model_type == "poisson") {
+        coef(fepois(model_fml, data = sub_data, offset = extra_fml, cluster = ~state))
+      } else {
+        coef(feols(model_fml, data = sub_data, weights = extra_fml, cluster = ~state))
+      }
+    }))
+
+    # make vcov matrix
+    jackknife_est_means <- colMeans(jackknife_est_matrix)
+    vcov_unscaled       <- jackknife_est_matrix |>
+      scale(center = jackknife_est_means, scale = FALSE) |>
+      crossprod()
+
+    scaling_factor <- (n_states - 1) / n_states
+    vcov           <- scaling_factor * vcov_unscaled
+    se             <- sqrt(diag(vcov))
+
+    # Gaussian sup-t critical value
+    # (Montiel Olea & Plagborg-Møller 2019)
+    sims <- rmvnorm(10000, sigma = cov2cor(vcov))
+    critical_value <- quantile(apply(abs(sims), 1, max), 0.95)
+
+    # exponential transformation if Poisson
+    if (model_type == "poisson") {
+      supt <- tibble(window = windows,
+                     est    = exp(coef0), se = se,
+                     lower  = exp(coef0 - critical_value * se),
+                     upper  = exp(coef0 + critical_value * se))
+    } else {
+      supt <- tibble(window = windows,
+                     est    = coef0, 
+                     se = se,
+                     lower  = coef0 - critical_value * se,
+                     upper  = coef0 + critical_value * se)
+    }
+  } else {
+    est_val <- if (model_type == "poisson") exp(coef0) else coef0
+    supt <- tibble(window = windows, est = est_val, se = 0, lower = est_val, upper = est_val)
+  }
+
+  # add the reference period
+  ref_val <- if (model_type == "poisson") 1 else 0
+  
+  output <- supt |>
+    bind_rows(tibble(window = -1, est = ref_val, se = 0, lower = ref_val, upper = ref_val)) |>
+    arrange(window)
+  
+  if(do_sensitivity){
+    honest_data <- output |> filter(window != -1) |> arrange(window)
+    honest_betahat <- honest_data$est
+    honest_sigma <- vcov
+    
+    numPrePeriods <- 6
+    numPostPeriods <- 7
+    pre_period_indices <- 1:numPrePeriods
+    
+    # wald
+    pre_coef_names <- names(coef0)[1:numPrePeriods]
+    wald_test <- fixest::wald(fe_fit, keep = pre_coef_names, vcov = vcov)
+    print("Wald Pre-Trend Test")
+    print(wald_test)
+
+    delta_rm_results <- HonestDiD::createSensitivityResults_relativeMagnitudes(
+                                    betahat = honest_betahat,
+                                    sigma = honest_sigma,
+                                    numPrePeriods = numPrePeriods,
+                                    numPostPeriods = numPostPeriods,
+                                    Mbarvec = seq(3.7, 4.2, by = 0.1)
+                                    )
+
+    print("M bar Results")
+    print(delta_rm_results)
+    return(list(output))
+  } else{
+    return(list(output))
+  }
+  
+}
+
+event_study_plot <- function(estimates,
+                             pal,
+                             baseline = 0) {
+  estimates |>
+    ggplot(aes(x = window, y = est, color = region, group = region)) +
+    geom_hline(yintercept = baseline, linetype = "dashed", color = "grey50") +
+    geom_vline(xintercept = -0.5, linetype = "dashed", color = "grey50") +
+    geom_point(size = 2.5, position = position_dodge(0.3)) +
+    geom_errorbar(aes(ymin = lower, ymax = upper), position = position_dodge(0.3)) +
+    geom_line(linewidth = 0.8, position = position_dodge(0.3)) +
+    labs(x = "Window",
+         y = "Difference in Arrests per 1k\nrelative to EUCA and window -1") +
+    scale_x_continuous(breaks = seq(min(estimates$window), max(estimates$window), by = 1)) +
+    theme_classic()+
+    scale_color_manual(values = pal)
+}
+
+
+plot_predictions <- function(data, model_fml, extra_fml, pal, baseline, type = c("linear", "poisson")) {
+  type <- match.arg(type)
+  
+  if (type == "poisson"){
+    mod <- fepois(model_fml, data = data)
+  } else{
+    mod  <- feols(model_fml, data = data)
+  }
+  data$pred <- predict(mod, newdata = data, type = "response")
+  
+  if (type == "poisson") {
+    baseline_windows <- data %>%
+      filter(window == -1) %>%
+      ungroup() %>%
+      select(region, n_arrests) %>%
+      rename(baseline_n_arrests = n_arrests)
+    
+    data <- data %>% 
+      inner_join(baseline_windows, by = "region") %>% 
+      mutate(
+        plot_y    = n_arrests / baseline_n_arrests,
+        plot_pred = pred / baseline_n_arrests
+      )
+    y_lab <- "Arrests per 1k (Relative to Window -1)"
+  } else {
+    data <- data %>% 
+      mutate(
+        plot_y = ratio,
+        plot_pred = pred
+      )
+    y_lab <- "Arrests per 1k"
+  }
+  
+  plt <- ggplot(data, aes(x = window, y = plot_y, color = region)) +
+    geom_point() +
+    geom_line(aes(group = region, y = plot_pred)) +
+    geom_hline(yintercept = baseline, linetype = "dashed", color = "grey50") +
+    geom_vline(xintercept = -0.5, linetype = "dashed", color = "grey50") +
+    labs(x = "Window", y = y_lab, title = "") +
+    theme_classic() +
+    scale_x_continuous(breaks = seq(min(data$window), max(data$window), by = 1)) +
+    scale_color_manual(values = pal)
+  
+  if (type == "poisson") {
+    plt <- plt + geom_hline(yintercept = 1, linetype = "dashed")
+  }
+  
+  return(plt)
+}
+
+fit_diffindiff <- function(data, model_fml, extra_fml, model_type = c("linear", "poisson"), do_se = TRUE, do_sensitivity = do_sensitivity) {
+  model_type  <- match.arg(model_type)
+  region_vals <- setdiff(unique(data$region), "EUCA")
+  region_coefs <- list()
+  
+  for (cur_region in region_vals) {
+    data_filtered <- data %>% filter(region %in% c("EUCA", cur_region))
+    
+    if (model_type == "poisson") {
+      mod <- fepois(model_fml, data_filtered, offset = extra_fml)
+    } else {
+      mod <- feols(model_fml, data_filtered, weights = extra_fml, cluster = ~state)
+    }
+    
+    jackknife_out <-  jackknife_supt(
+      fe_fit    = mod, 
+      model_fml = model_fml, 
+      data      = data_filtered, 
+      model_type = model_type, 
+      extra_fml = extra_fml, 
+      do_se     = do_se,
+      do_sensitivity = do_sensitivity
+    )
+    region_coefs[[cur_region]] <- jackknife_out[[1]] %>%
+      mutate(region = cur_region)
+  }
+  
+  print(bind_rows(region_coefs))
+  return(bind_rows(region_coefs))
+}
+
+
+arrange_fig1 <- function(data_allregion, data_state_allregion, data_nonEUCA, data_state_nonEUCA, 
+                         type = c("poisson", "linear"), model_fml, extra_fml, title, do_se = T, do_sensitivity = F){
+  
+  type <- match.arg(type)
+  
+  # 1. Generate base plots
+  plt.part_a <- plot_predictions(data = data_allregion, model_fml = model_fml, pal = pal, baseline = ifelse(type == "poisson", 1, 0), type = type)
+  plt.part_b <- event_study_plot(fit_diffindiff(data_state_allregion, model_fml, extra_fml, type, do_se = do_se, do_sensitivity = F), pal = pal, baseline = ifelse(type == "poisson", 1, 0))
+  plt.part_c <- plot_predictions(data = data_nonEUCA, model_fml = model_fml, pal = pal_euca, baseline = ifelse(type == "poisson", 1, 0), type = type)
+  plt.part_d <- event_study_plot(fit_diffindiff(data_state_nonEUCA, model_fml, extra_fml, type, do_se = do_se, do_sensitivity = do_sensitivity), pal = pal_euca, baseline = ifelse(type == "poisson", 1, 0))
+
+  # 2. Synchronize y-axis limits
+  ylim_ac <- range(c(layer_scales(plt.part_a)$y$range$range, layer_scales(plt.part_c)$y$range$range), na.rm = TRUE)
+  ylim_bd <- range(c(layer_scales(plt.part_b)$y$range$range, layer_scales(plt.part_d)$y$range$range), na.rm = TRUE)
+
+  # 3. Apply customizations to top row (c and d)
+  color_var_name <- as.character(plt.part_a$mapping$colour[[2]]) # Extracts the column name used for color
+  c_categories <- unique(data_allregion[[color_var_name]])
+  c_breaks_filtered <- setdiff(c_categories, "EUCA")
+
+  custom_labels <- c("EUCA", "Non-EUCA")
+  
+  plt.part_c_clean <- plt.part_c + 
+    coord_cartesian(ylim = ylim_ac) +
+    labs(color = "") +
+    scale_color_manual(
+      values = pal_euca, 
+      labels = custom_labels
+    ) +
+    theme(axis.title.x = element_blank(), 
+          axis.text.x  = element_blank(), 
+          axis.ticks.x = element_blank(),
+          legend.position = "bottom")
+  
+  plt.part_d_clean <- plt.part_d + 
+    coord_cartesian(ylim = ylim_bd) +
+    theme(axis.title.x = element_blank(), 
+          axis.text.x  = element_blank(), 
+          axis.ticks.x = element_blank(),
+          legend.position = "none")
+  
+  plt.part_a_clean <- plt.part_a + 
+    coord_cartesian(ylim = ylim_ac) +
+    labs(color = "") +
+    scale_color_manual(values = pal,
+                       breaks = c_breaks_filtered) +
+    theme(legend.position = "bottom")
+  
+  plt.part_b_clean <- plt.part_b + 
+    coord_cartesian(ylim = ylim_bd) +
+    theme(legend.position = "none")
+  
+  # 5. Assemble layout
+  fig <- plt.part_c_clean + plt.part_d_clean + plt.part_a_clean + plt.part_b_clean + 
+    plot_layout(
+      ncol = 2, 
+      guides = "collect", 
+      axis_titles = "collect"
+    ) + 
+    plot_annotation(
+      title = title,
+      theme = theme(
+        plot.title = element_text(size = 14, face = "bold", hjust = 0.5),
+        legend.position = "bottom"
+      )
+    )
+  
+  return(fig)
+}
+
+```
+
+```{r color_palette, include = F}
+#### COLOR PALETTE ####
+all_regions <- c("Africa", "Asia", "Caribbean", "EUCA", "MCA", "SA")
+other_regions <- setdiff(all_regions, "EUCA")
+pal <- c("EUCA" = "darkgrey", 
+         setNames(scales::brewer_pal(palette = "Dark2")(length(other_regions)), other_regions))
+
+pal_euca <- c("EUCA" = "darkgrey", "nonEUCA" = "darkblue")
+```
+
+## Figures
+```{r setup_data, include = F}
+#### CONSTANTS ####
+model_fml <- as.formula(
+  paste0("ratio ~ i(window, region, ref = -1, ref2 = 'EUCA') | region + window")
+)
+wt_fml <- as.formula("~ pop")
+
+pois_model_fml <- as.formula(
+  paste0("n_arrests ~ i(window, region, ref = -1, ref2 = 'EUCA') | region + window")
+)
+offset_fml <- as.formula("~log_pop")
+```
+
+
+```{r, main_figs, echo = F}
+trajectory <- read_csv("../data/glm_trajectory_type_threatlevel_convicted_ACS_MPI.csv") %>%
+  mutate(region = ifelse(region == "AFRICA", "Africa",
+                         ifelse(region == "ASIA", "Asia",
+                                ifelse(region == "CARIBBEAN", "Caribbean", region))))
+
+data_state_allregion <- aggregate_data(trajectory, c("region", "window", "state"), "pop_MPI", agg_noneuca = FALSE)
+data_state_nonEUCA <- aggregate_data(trajectory, c("region", "window", "state"), "pop_MPI", agg_noneuca = TRUE)
+data_allregion <- aggregate_data(trajectory, c("region", "window"), "pop_MPI", agg_noneuca = FALSE)
+data_nonEUCA <- aggregate_data(trajectory, c("region", "window"), "pop_MPI", agg_noneuca = TRUE)
+
+arrange_fig1(data_allregion, data_state_allregion, data_nonEUCA, data_state_nonEUCA, "linear", model_fml, wt_fml, "", do_sensitivity = T)
+ggsave("../figures/main_text/mpi_denoms_fig1.pdf", height = 4.5, width = 7.5)
+
+data_state_allregion <- aggregate_data(trajectory, c("region", "window", "state"), "pop_ACS", agg_noneuca = FALSE)
+data_state_nonEUCA <- aggregate_data(trajectory, c("region", "window", "state"), "pop_ACS", agg_noneuca = TRUE)
+data_allregion <- aggregate_data(trajectory, c("region", "window"), "pop_ACS", agg_noneuca = FALSE)
+data_nonEUCA <- aggregate_data(trajectory, c("region", "window"), "pop_ACS", agg_noneuca = TRUE)
+
+arrange_fig1(data_allregion, data_state_allregion, data_nonEUCA, data_state_nonEUCA, "linear", model_fml, wt_fml, "")
+ggsave("../figures/supplement/acs_denoms_fig1.pdf", height = 4.5, width = 7.5)
+
+arrange_fig1(data_allregion, data_state_allregion, data_nonEUCA, data_state_nonEUCA, "poisson", pois_model_fml, offset_fml, "")
+ggsave("../figures/supplement/multiplicative_fig1.pdf", height = 4.5, width = 7.5)
+```
+
+Test for significance
+```{r, sig_test, echo = F}
+trajectory <- read_csv("../data/glm_trajectory_type_threatlevel_convicted_ACS_MPI.csv") %>%
+  mutate(region = ifelse(region == "AFRICA", "Africa",
+                         ifelse(region == "ASIA", "Asia",
+                                ifelse(region == "CARIBBEAN", "Caribbean", region))))
+
+data_state_nonEUCA <- aggregate_data(trajectory, c("region", "window", "state"), "pop_MPI", agg_noneuca = TRUE) %>%
+  filter(window >= -1) %>%
+  mutate(window = ifelse(window < 0, -1, 0)) %>%
+  group_by(region, window, pop, state) %>%
+  summarize(n_arrests = sum(n_arrests)) %>%
+  mutate(ratio = n_arrests/pop*1000)
+
+mod <- feols(model_fml, data_state_nonEUCA, weights = wt_fml, cluster = ~state)
+
+states <- unique(data_state_nonEUCA$state)
+n_states <- length(states)
+
+windows <- c(0)
+
+jackknife_est_matrix <- t(sapply(states, function(dropped_state) {
+  sub_data <- subset(data_state_nonEUCA, state != dropped_state)
+  coef(feols(model_fml, data = sub_data, weights = wt_fml, cluster = ~state))
+}))
+
+var = sum((jackknife_est_matrix - mean(jackknife_est_matrix))^2)*(n_states-1)/(n_states )
+se = sqrt(var)
+z = mean(jackknife_est_matrix)/se
+pnorm(-abs(z))*2
+
+mean(jackknife_est_matrix)
+mean(jackknife_est_matrix)-1.96*se
+mean(jackknife_est_matrix)+1.96*se
+```
+
+```{r, sig_test, echo = F}
+trajectory <- read_csv("../data/glm_trajectory_type_threatlevel_convicted_ACS_MPI.csv") %>%
+  mutate(region = ifelse(region == "AFRICA", "Africa",
+                         ifelse(region == "ASIA", "Asia",
+                                ifelse(region == "CARIBBEAN", "Caribbean", region))))
+
+data_state_nonEUCA <- aggregate_data(trajectory, c("region", "window", "state"), "pop_MPI", agg_noneuca = TRUE) %>%
+  filter(window <= -1) %>%
+  mutate(window = ifelse(window == -1, -1, 0)) %>%
+  group_by(region, window, pop, state) %>%
+  summarize(n_arrests = sum(n_arrests)) %>%
+  mutate(ratio = n_arrests/pop*1000)
+
+mod <- feols(model_fml, data_state_nonEUCA, weights = wt_fml, cluster = ~state)
+
+states <- unique(data_state_nonEUCA$state)
+n_states <- length(states)
+
+windows <- c(0)
+
+jackknife_est_matrix <- t(sapply(states, function(dropped_state) {
+  sub_data <- subset(data_state_nonEUCA, state != dropped_state)
+  coef(feols(model_fml, data = sub_data, weights = wt_fml, cluster = ~state))
+}))
+
+var = sum((jackknife_est_matrix - mean(jackknife_est_matrix))^2)*(n_states-1)/(n_states )
+se = sqrt(var)
+z = mean(jackknife_est_matrix)/se
+pnorm(-abs(z))*2
+
+mean(jackknife_est_matrix)
+mean(jackknife_est_matrix)-1.96*se
+mean(jackknife_est_matrix)+1.96*se
+```
+
+```{r, CA_figs, echo = F}
+trajectory <- read_csv("../data/glm_trajectory_type_threatlevel_convicted_ACS_MPI.csv") %>%
+  filter(method == "CA") %>%
+  mutate(region = ifelse(region == "AFRICA", "Africa",
+                         ifelse(region == "ASIA", "Asia",
+                                ifelse(region == "CARIBBEAN", "Caribbean", region))))
+
+data_state_allregion <- aggregate_data(trajectory, c("region", "window", "state"), "pop_MPI", agg_noneuca = FALSE)
+data_state_nonEUCA <- aggregate_data(trajectory, c("region", "window", "state"), "pop_MPI", agg_noneuca = TRUE)
+data_allregion <- aggregate_data(trajectory, c("region", "window"), "pop_MPI", agg_noneuca = FALSE)
+data_nonEUCA <- aggregate_data(trajectory, c("region", "window"), "pop_MPI", agg_noneuca = TRUE)
+
+arrange_fig1(data_allregion, data_state_allregion, data_nonEUCA, data_state_nonEUCA, "linear", model_fml, wt_fml, "")
+ggsave("../figures/supplement/ca_mpi_denoms_fig1.pdf", height = 4.5, width = 7.5)
+
+data_state_allregion <- aggregate_data(trajectory, c("region", "window", "state"), "pop_ACS", agg_noneuca = FALSE)
+data_state_nonEUCA <- aggregate_data(trajectory, c("region", "window", "state"), "pop_ACS", agg_noneuca = TRUE)
+data_allregion <- aggregate_data(trajectory, c("region", "window"), "pop_ACS", agg_noneuca = FALSE)
+data_nonEUCA <- aggregate_data(trajectory, c("region", "window"), "pop_ACS", agg_noneuca = TRUE)
+
+arrange_fig1(data_allregion, data_state_allregion, data_nonEUCA, data_state_nonEUCA, "linear", model_fml, wt_fml, "")
+ggsave("../figures/supplement/ca_acs_denoms_fig1.pdf", height = 4.5, width = 7.5)
+
+arrange_fig1(data_allregion, data_state_allregion, data_nonEUCA, data_state_nonEUCA, "poisson", pois_model_fml, offset_fml, "")
+ggsave("../figures/supplement/ca_multiplicative_fig1.pdf", height = 4.5, width = 7.5)
+```
+
+```{r, LEA_figs, echo = F}
+trajectory <- read_csv("../data/glm_trajectory_type_threatlevel_convicted_ACS_MPI.csv") %>%
+  filter(method == "LEA") %>%
+  mutate(region = ifelse(region == "AFRICA", "Africa",
+                         ifelse(region == "ASIA", "Asia",
+                                ifelse(region == "CARIBBEAN", "Caribbean", region))))
+
+data_state_allregion <- aggregate_data(trajectory, c("region", "window", "state"), "pop_MPI", agg_noneuca = FALSE)
+data_state_nonEUCA <- aggregate_data(trajectory, c("region", "window", "state"), "pop_MPI", agg_noneuca = TRUE)
+data_allregion <- aggregate_data(trajectory, c("region", "window"), "pop_MPI", agg_noneuca = FALSE)
+data_nonEUCA <- aggregate_data(trajectory, c("region", "window"), "pop_MPI", agg_noneuca = TRUE)
+
+arrange_fig1(data_allregion, data_state_allregion, data_nonEUCA, data_state_nonEUCA, "linear", model_fml, wt_fml, "")
+ggsave("../figures/supplement/lea_mpi_denoms_fig1.pdf", height = 4.5, width = 7.5)
+
+data_state_allregion <- aggregate_data(trajectory, c("region", "window", "state"), "pop_ACS", agg_noneuca = FALSE)
+data_state_nonEUCA <- aggregate_data(trajectory, c("region", "window", "state"), "pop_ACS", agg_noneuca = TRUE)
+data_allregion <- aggregate_data(trajectory, c("region", "window"), "pop_ACS", agg_noneuca = FALSE)
+data_nonEUCA <- aggregate_data(trajectory, c("region", "window"), "pop_ACS", agg_noneuca = TRUE)
+
+arrange_fig1(data_allregion, data_state_allregion, data_nonEUCA, data_state_nonEUCA, "linear", model_fml, wt_fml, "")
+ggsave("../figures/supplement/lea_acs_denoms_fig1.pdf", height = 4.5, width = 7.5)
+
+arrange_fig1(data_allregion, data_state_allregion, data_nonEUCA, data_state_nonEUCA, "poisson", pois_model_fml, offset_fml, "")
+ggsave("../figures/supplement/lea_multiplicative_fig1.pdf", height = 4.5, width = 7.5)
+```
+
+
+
