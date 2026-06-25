@@ -92,7 +92,7 @@ aggregate_data <- function(data,
   return(data_pop)
 }
 
-jackknife_supt <- function(fe_fit, model_fml, data, model_type = c("linear", "poisson"), extra_fml = NULL, do_se = TRUE) {
+jackknife_supt <- function(fe_fit, model_fml, data, model_type = c("linear", "poisson"), extra_fml = NULL, do_se = TRUE, do_sensitivity = F) {
   model_type <- match.arg(model_type)
   coef0      <- coef(fe_fit)
   states     <- unique(data$state)
@@ -143,26 +143,39 @@ jackknife_supt <- function(fe_fit, model_fml, data, model_type = c("linear", "po
   }
 
   ref_val <- if (model_type == "poisson") 1 else 0
-  supt |>
+  output <- supt |>
     bind_rows(tibble(window = -1, est = ref_val, se = 0, lower = ref_val, upper = ref_val)) |>
     arrange(window)
-}
+  
+   if(do_sensitivity){
+    honest_data <- output |> filter(window != -1) |> arrange(window)
+    honest_betahat <- honest_data$est
+    honest_sigma <- vcov
+    
+    numPrePeriods <- 6
+    numPostPeriods <- 7
+    pre_period_indices <- 1:numPrePeriods
+    
+    # wald
+    pre_coef_names <- names(coef0)[1:numPrePeriods]
+    wald_test <- fixest::wald(fe_fit, keep = pre_coef_names, vcov = vcov)
+    print("Wald Pre-Trend Test")
+    print(wald_test)
 
-event_study_plot_old <- function(estimates,
-                             pal,
-                             baseline = 0) {
-  estimates |>
-    ggplot(aes(x = window, y = est, color = conv_method, group = conv_method)) +
-    geom_hline(yintercept = baseline, linetype = "dashed", color = "grey50") +
-    geom_vline(xintercept = -0.5, linetype = "dashed", color = "grey50") +
-    geom_point() +
-    geom_errorbar(aes(ymin = lower, ymax = upper)) +
-    geom_line() +
-    labs(x = "Window",
-         y = "Difference in Arrests per 1k\nrelative to EUCA and window -1") +
-    scale_x_continuous(breaks = seq(min(estimates$window), max(estimates$window), by = 1)) +
-    theme_classic()+
-    scale_color_manual(values = pal)
+    delta_rm_results <- HonestDiD::createSensitivityResults_relativeMagnitudes(
+                                    betahat = honest_betahat,
+                                    sigma = honest_sigma,
+                                    numPrePeriods = numPrePeriods,
+                                    numPostPeriods = numPostPeriods,
+                                    Mbarvec = c(1, 1.1, 1.7, 1.8, 1.9, 2.0, 2.8, 2.9, 5.1, 5.2)
+                                    )
+
+    print("M bar Results")
+    print(delta_rm_results)
+    
+  } 
+  return(output)
+  
 }
 
 event_study_plot <- function(estimates, pal, baseline = 0, show_guide = TRUE) {
@@ -187,7 +200,7 @@ event_study_plot <- function(estimates, pal, baseline = 0, show_guide = TRUE) {
 }
 
 
-fit_diffindiff <- function(data, model_fml, extra_fml, model_type = c("linear", "poisson"), do_se = TRUE) {
+fit_diffindiff <- function(data, model_fml, extra_fml, model_type = c("linear", "poisson"), do_se = TRUE, do_sensitivity = F) {
   model_type  <- match.arg(model_type)
   method_vals <- unique(data$conv_method)
   method_coefs <- list()
@@ -207,7 +220,8 @@ fit_diffindiff <- function(data, model_fml, extra_fml, model_type = c("linear", 
       data      = data_filtered,
       model_type = model_type,
       extra_fml = extra_fml,
-      do_se     = do_se
+      do_se     = do_se,
+      do_sensitivity = do_sensitivity
     ) %>%
       mutate(conv_method = cur_method)
   }
@@ -215,7 +229,7 @@ fit_diffindiff <- function(data, model_fml, extra_fml, model_type = c("linear", 
   return(bind_rows(method_coefs))
 }
 
-arrange_figure2 <- function(conv_method, conv_method_state, model_fml, wt_fml, model_type, title, do_se = TRUE) {
+arrange_figure2 <- function(conv_method, conv_method_state, model_fml, wt_fml, model_type, title, do_se = TRUE, do_sensitivity = F) {
   interaction_colors <- c(
     "EUCA_nonconv"    = "#555555",
     "EUCA_conv"       = "#BBBBBB",
@@ -284,8 +298,14 @@ arrange_figure2 <- function(conv_method, conv_method_state, model_fml, wt_fml, m
 
   model_list <- conv_method_state %>%
     group_split(conv_method) %>%
-    map_dfr(~ fit_diffindiff(.x, model_fml, wt_fml, model_type = model_type, do_se = do_se) %>% 
-              mutate(conv_method = unique(.x$conv_method))) %>%
+    map_dfr(function(.x) {
+    current_method <- unique(.x$conv_method)
+
+    message("Fitting model for conv_method: ", current_method)
+
+    fit_diffindiff(.x, model_fml, wt_fml, model_type = model_type, do_se = do_se, do_sensitivity = do_sensitivity) %>% 
+      mutate(conv_method = current_method)
+    }) %>%
     mutate(conv_status = if_else(str_detect(conv_method, "_conv"), "conv", "nonconv"))
 
   possible_y_cols <- c("est", "lower", "upper", "estimate", "conf.low", "conf.high")
@@ -369,7 +389,7 @@ conv_method_state <- aggregate_data(trajectory, c("conv_method", "region", "stat
                                       TRUE) %>%
   filter(!is.na(conv_method))
 
-arrange_figure2(conv_method, conv_method_state, model_fml, wt_fml, "linear", "")
+arrange_figure2(conv_method, conv_method_state, model_fml, wt_fml, "linear", "", do_sensitivity = T)
 ggsave("../figures/main_text/mpi_denoms_fig2.pdf", height = 5.5, width = 9)
 
 conv_method <- aggregate_data(trajectory, c("conv_method", "region", "window"), 
@@ -441,6 +461,43 @@ print("CA nonconv:")
 return_p_value(conv_method_state %>% filter(conv_method == "CA_nonconv"))
 ```
 
-```{r}
+```{r, fig_remove_states, echo = F}
+trajectory <- read_csv("../data/glm_trajectory_type_threatlevel_convicted_ACS_MPI.csv") %>%
+  filter(!(state %in% c("MAINE", "MONTANA", "NORTH DAKOTA", "SOUTH DAKOTA", "VERMONT", "WEST VIRGINIA", "WYOMING")))
+
+# create four groups
+trajectory <- trajectory %>%
+  mutate(conv_method = ifelse(method == "LEA", 
+                              ifelse(convicted == 1, "LEA_conv", "LEA_nonconv"),
+                              ifelse(method == "CA", 
+                                     ifelse(convicted == 1, "CA_conv", "CA_nonconv"),
+                                     NA)))
+
+
+conv_method <- aggregate_data(trajectory, c("conv_method", "region", "window"), 
+                                      "pop_MPI", 
+                                      TRUE) %>%
+  filter(!is.na(conv_method))
+
+conv_method_state <- aggregate_data(trajectory, c("conv_method", "region", "state", "window"), 
+                                      "pop_MPI", 
+                                      TRUE) %>%
+  filter(!is.na(conv_method))
+
+arrange_figure2(conv_method, conv_method_state, model_fml, wt_fml, "linear", "", do_sensitivity = F)
+
+conv_method <- aggregate_data(trajectory, c("conv_method", "region", "window"), 
+                                      "pop_ACS", 
+                                      TRUE) %>%
+  filter(!is.na(conv_method))
+
+conv_method_state <- aggregate_data(trajectory, c("conv_method", "region", "state", "window"), 
+                                      "pop_ACS", 
+                                      TRUE) %>%
+  filter(!is.na(conv_method))
+
+arrange_figure2(conv_method, conv_method_state, model_fml, wt_fml, "linear", "")
+
+arrange_figure2(conv_method, conv_method_state, pois_model_fml, offset_fml, "poisson", "")
 
 ```

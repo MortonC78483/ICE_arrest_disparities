@@ -531,5 +531,29 @@ arrange_fig1(data_allregion, data_state_allregion, data_nonEUCA, data_state_nonE
 ggsave("../figures/supplement/lea_multiplicative_fig1.pdf", height = 4.5, width = 7.5)
 ```
 
+```{r, takeout_states, echo = F}
+trajectory <- read_csv("../data/glm_trajectory_type_threatlevel_convicted_ACS_MPI.csv") %>%
+  mutate(region = ifelse(region == "AFRICA", "Africa",
+                         ifelse(region == "ASIA", "Asia",
+                                ifelse(region == "CARIBBEAN", "Caribbean", region)))) %>%
+  filter(!(state %in% c("MAINE", "MONTANA", "NORTH DAKOTA", "SOUTH DAKOTA", "VERMONT", "WEST VIRGINIA", "WYOMING")))
+
+data_state_allregion <- aggregate_data(trajectory, c("region", "window", "state"), "pop_MPI", agg_noneuca = FALSE)
+data_state_nonEUCA <- aggregate_data(trajectory, c("region", "window", "state"), "pop_MPI", agg_noneuca = TRUE)
+data_allregion <- aggregate_data(trajectory, c("region", "window"), "pop_MPI", agg_noneuca = FALSE)
+data_nonEUCA <- aggregate_data(trajectory, c("region", "window"), "pop_MPI", agg_noneuca = TRUE)
+
+arrange_fig1(data_allregion, data_state_allregion, data_nonEUCA, data_state_nonEUCA, "linear", model_fml, wt_fml, "", do_sensitivity = F)
+
+data_state_allregion <- aggregate_data(trajectory, c("region", "window", "state"), "pop_ACS", agg_noneuca = FALSE)
+data_state_nonEUCA <- aggregate_data(trajectory, c("region", "window", "state"), "pop_ACS", agg_noneuca = TRUE)
+data_allregion <- aggregate_data(trajectory, c("region", "window"), "pop_ACS", agg_noneuca = FALSE)
+data_nonEUCA <- aggregate_data(trajectory, c("region", "window"), "pop_ACS", agg_noneuca = TRUE)
+
+arrange_fig1(data_allregion, data_state_allregion, data_nonEUCA, data_state_nonEUCA, "linear", model_fml, wt_fml, "")
+
+arrange_fig1(data_allregion, data_state_allregion, data_nonEUCA, data_state_nonEUCA, "poisson", pois_model_fml, offset_fml, "")
+```
+
 
 
