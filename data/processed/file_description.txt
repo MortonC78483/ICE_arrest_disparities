@@ -1,0 +1,9 @@
+This folder will eventually contain:
+
+ddp_arrests_state_threat_gender_age_cleaned.dta
+
+glm_trajectory_type_threatlevel_convicted_ACS_MPI_AOR.csv
+
+glm_trajectory_type_threatlevel_convicted_ACS_MPI.csv
+
+Which are files created by the codebase from the raw datafiles.
