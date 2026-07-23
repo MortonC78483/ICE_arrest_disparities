@@ -2,12 +2,25 @@
 title: "triple_diff"
 author: "Claire Morton"
 date: "2026-06-19"
-output: html_document
+output:
+  pdf_document: default
+  html_document: default
 ---
 
 ```{r setup, include=FALSE}
 knitr::opts_chunk$set(echo = TRUE)
+library(broom)
+library(dplyr)
+library(tidyr)
+library(stringr)
+library(ggplot2)
+library(ggpubr)
+library(fixest)
+library(mvtnorm)
+library(patchwork)
 library(readr)
+library(tidyverse)
+library(patchwork)
 ```
 
 ```{r}
@@ -87,7 +100,7 @@ aggregate_data <- function(data,
 ```
 
 ```{r, echo = F}
-trajectory <- read_csv("../data/glm_trajectory_type_threatlevel_convicted_ACS_MPI.csv") 
+trajectory <- read_csv("../data/processed/glm_trajectory_type_threatlevel_convicted_ACS_MPI.csv") 
 
 trajectory <- trajectory %>%
   mutate(conv_method = ifelse(method == "LEA", 
@@ -138,7 +151,7 @@ return_p_value(conv_method_state)
 
 
 ```{r, echo = F}
-trajectory <- read_csv("../data/glm_trajectory_type_threatlevel_convicted_ACS_MPI.csv") 
+trajectory <- read_csv("../data/processed/glm_trajectory_type_threatlevel_convicted_ACS_MPI.csv") 
 
 trajectory <- trajectory %>%
   mutate(conv_method = ifelse(method == "LEA", 

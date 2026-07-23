@@ -97,7 +97,7 @@ aggregate_data <- function(data,
 
 MPI, AOR
 ```{r}
-trajectory <- read_csv("../data/glm_trajectory_type_threatlevel_convicted_ACS_MPI_AOR.csv") %>%
+trajectory <- read_csv("../data/processed/glm_trajectory_type_threatlevel_convicted_ACS_MPI_AOR.csv") %>%
   #filter(method == "CA" & convicted == 1) 
   #filter(method == "CA" & convicted == 0) 
   #filter(method == "LEA" & convicted == 1)
@@ -129,7 +129,7 @@ trajectory_agg %>%
 
 ACS, AOR
 ```{r}
-trajectory <- read_csv("../data/glm_trajectory_type_threatlevel_convicted_ACS_MPI_AOR.csv") %>%
+trajectory <- read_csv("../data/processed/glm_trajectory_type_threatlevel_convicted_ACS_MPI_AOR.csv") %>%
   #filter(method == "CA" & convicted == 1) 
   #filter(method == "CA" & convicted == 0) 
   #filter(method == "LEA" & convicted == 1)
@@ -233,7 +233,7 @@ aggregate_data <- function(data,
 
 MPI, state
 ```{r}
-trajectory <- read_csv("../data/glm_trajectory_type_threatlevel_convicted_ACS_MPI.csv") %>%
+trajectory <- read_csv("../data/processed/glm_trajectory_type_threatlevel_convicted_ACS_MPI.csv") %>%
   #filter(method == "CA" & convicted == 1) 
   #filter(method == "CA" & convicted == 0) 
   #filter(method == "LEA" & convicted == 1)
@@ -265,7 +265,7 @@ trajectory_agg %>%
 
 ACS, state
 ```{r}
-trajectory <- read_csv("../data/glm_trajectory_type_threatlevel_convicted_ACS_MPI.csv")  %>%
+trajectory <- read_csv("../data/processed/glm_trajectory_type_threatlevel_convicted_ACS_MPI.csv")  %>%
   #filter(method == "CA" & convicted == 1) 
   #filter(method == "CA" & convicted == 0) 
   #filter(method == "LEA" & convicted == 1)

@@ -11,7 +11,7 @@ library(dplyr)
 ```
 
 ```{r}
-trajectory <- read_csv("../data/glm_trajectory_type_threatlevel_convicted_ACS_MPI.csv")
+trajectory <- read_csv("../data/processed/glm_trajectory_type_threatlevel_convicted_ACS_MPI.csv")
 
 n_arrests_pre <-trajectory %>%
   filter(window < 0) %>%
@@ -53,7 +53,7 @@ rbind(tab_EUCA, tab_nonEUCA, tab_totals, tab_totals_all) %>%
 ```
 
 ```{r}
-trajectory <- read_csv("../data/glm_trajectory_type_threatlevel_convicted_ACS_MPI.csv")
+trajectory <- read_csv("../data/processed/glm_trajectory_type_threatlevel_convicted_ACS_MPI.csv")
 
 n_arrests_pre <-trajectory %>%
   filter(window < 0) %>%

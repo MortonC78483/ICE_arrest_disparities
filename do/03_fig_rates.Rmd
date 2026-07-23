@@ -408,7 +408,7 @@ offset_fml <- as.formula("~log_pop")
 
 
 ```{r, main_figs, echo = F}
-trajectory <- read_csv("../data/glm_trajectory_type_threatlevel_convicted_ACS_MPI.csv") %>%
+trajectory <- read_csv("../data/processed/glm_trajectory_type_threatlevel_convicted_ACS_MPI.csv") %>%
   mutate(region = ifelse(region == "AFRICA", "Africa",
                          ifelse(region == "ASIA", "Asia",
                                 ifelse(region == "CARIBBEAN", "Caribbean", region))))
@@ -435,7 +435,7 @@ ggsave("../figures/supplement/multiplicative_fig1.pdf", height = 4.5, width = 7.
 
 Test for significance
 ```{r, sig_test, echo = F}
-trajectory <- read_csv("../data/glm_trajectory_type_threatlevel_convicted_ACS_MPI.csv") %>%
+trajectory <- read_csv("../data/processed/glm_trajectory_type_threatlevel_convicted_ACS_MPI.csv") %>%
   mutate(region = ifelse(region == "AFRICA", "Africa",
                          ifelse(region == "ASIA", "Asia",
                                 ifelse(region == "CARIBBEAN", "Caribbean", region))))
@@ -479,7 +479,7 @@ mean(jackknife_est_matrix)+1.96*se
 
 Test for significance
 ```{r, pois_sig_test, echo = F}
-trajectory <- read_csv("../data/glm_trajectory_type_threatlevel_convicted_ACS_MPI.csv") %>%
+trajectory <- read_csv("../data/processed/glm_trajectory_type_threatlevel_convicted_ACS_MPI.csv") %>%
   mutate(region = ifelse(region == "AFRICA", "Africa",
                          ifelse(region == "ASIA", "Asia",
                                 ifelse(region == "CARIBBEAN", "Caribbean", region))))
@@ -523,7 +523,7 @@ exp(mean(jackknife_est_matrix)+1.96*se)
 ```
 
 ```{r, CA_figs, echo = F}
-trajectory <- read_csv("../data/glm_trajectory_type_threatlevel_convicted_ACS_MPI.csv") %>%
+trajectory <- read_csv("../data/processed/glm_trajectory_type_threatlevel_convicted_ACS_MPI.csv") %>%
   filter(method == "CA") %>%
   mutate(region = ifelse(region == "AFRICA", "Africa",
                          ifelse(region == "ASIA", "Asia",
@@ -550,7 +550,7 @@ ggsave("../figures/supplement/ca_multiplicative_fig1.pdf", height = 4.5, width =
 ```
 
 ```{r, LEA_figs, echo = F}
-trajectory <- read_csv("../data/glm_trajectory_type_threatlevel_convicted_ACS_MPI.csv") %>%
+trajectory <- read_csv("../data/processed/glm_trajectory_type_threatlevel_convicted_ACS_MPI.csv") %>%
   filter(method == "LEA") %>%
   mutate(region = ifelse(region == "AFRICA", "Africa",
                          ifelse(region == "ASIA", "Asia",
@@ -577,7 +577,7 @@ ggsave("../figures/supplement/lea_multiplicative_fig1.pdf", height = 4.5, width 
 ```
 
 ```{r, takeout_states, echo = F}
-trajectory <- read_csv("../data/glm_trajectory_type_threatlevel_convicted_ACS_MPI.csv") %>%
+trajectory <- read_csv("../data/processed/glm_trajectory_type_threatlevel_convicted_ACS_MPI.csv") %>%
   mutate(region = ifelse(region == "AFRICA", "Africa",
                          ifelse(region == "ASIA", "Asia",
                                 ifelse(region == "CARIBBEAN", "Caribbean", region)))) %>%

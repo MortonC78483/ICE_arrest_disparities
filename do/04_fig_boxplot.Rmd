@@ -94,7 +94,7 @@ aggregate_data <- function(data,
 ```
 
 ```{r}
-trajectory <- read_csv("../data/glm_trajectory_type_threatlevel_convicted_ACS_MPI_AOR.csv")
+trajectory <- read_csv("../data/processed/glm_trajectory_type_threatlevel_convicted_ACS_MPI_AOR.csv")
 trajectory %>%
   filter(region != "EUCA") %>%
   ungroup() %>%
@@ -191,7 +191,7 @@ quantile(conv_method[conv_method$region == "Non-EUCA",]$diff , probs = c(.25, .7
 ```
 
 ```{r, acs_version}
-trajectory <- read_csv("../data/glm_trajectory_type_threatlevel_convicted_ACS_MPI_AOR.csv")
+trajectory <- read_csv("../data/processed/glm_trajectory_type_threatlevel_convicted_ACS_MPI_AOR.csv")
 
 conv_method_aor <- aggregate_data(trajectory, c("region", "aor", "window"), "pop_ACS", TRUE) %>%
   mutate(window = ifelse(window < 0, -1, 0)) %>%
@@ -276,7 +276,7 @@ ggsave("../figures/supplement/acs_denoms_fig3.pdf", height = 4.5, width = 7.5)
 
 
 ```{r, mult_data}
-trajectory <- read_csv("../data/glm_trajectory_type_threatlevel_convicted_ACS_MPI_AOR.csv")
+trajectory <- read_csv("../data/processed/glm_trajectory_type_threatlevel_convicted_ACS_MPI_AOR.csv")
 
 conv_method_aor <- aggregate_data(trajectory, c("region", "aor", "window"), "pop_MPI", TRUE) %>%
   mutate(window = ifelse(window < 0, -1, 0)) %>%
@@ -449,7 +449,7 @@ aggregate_data <- function(data,
 ```
 
 ```{r}
-trajectory <- read_csv("../data/glm_trajectory_type_threatlevel_convicted_ACS_MPI.csv")
+trajectory <- read_csv("../data/processed/glm_trajectory_type_threatlevel_convicted_ACS_MPI.csv")
 
 conv_method_state <- aggregate_data(trajectory, c("region", "state", "window"), "pop_MPI", TRUE) %>%
   mutate(window = ifelse(window < 0, -1, 0)) %>%

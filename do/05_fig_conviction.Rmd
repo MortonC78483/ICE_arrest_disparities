@@ -393,7 +393,7 @@ offset_fml <- as.formula("~log_pop")
 ```
 
 ```{r, main_fig, echo = F}
-trajectory <- read_csv("../data/glm_trajectory_type_threatlevel_convicted_ACS_MPI.csv")
+trajectory <- read_csv("../data/processed/glm_trajectory_type_threatlevel_convicted_ACS_MPI.csv")
 
 # create four groups
 trajectory <- trajectory %>%
@@ -437,7 +437,7 @@ ggsave("../figures/supplement/multiplicative_fig2.pdf", height = 5.5, width = 9)
 
 Test for significance
 ```{r, sig_test, echo = F}
-trajectory <- read_csv("../data/glm_trajectory_type_threatlevel_convicted_ACS_MPI.csv")
+trajectory <- read_csv("../data/processed/glm_trajectory_type_threatlevel_convicted_ACS_MPI.csv")
 
 # create four groups
 trajectory <- trajectory %>%
@@ -487,7 +487,7 @@ return_p_value(conv_method_state %>% filter(conv_method == "CA_nonconv"))
 ```
 
 ```{r, fig_remove_states, echo = F}
-trajectory <- read_csv("../data/glm_trajectory_type_threatlevel_convicted_ACS_MPI.csv") %>%
+trajectory <- read_csv("../data/processed/glm_trajectory_type_threatlevel_convicted_ACS_MPI.csv") %>%
   filter(!(state %in% c("MAINE", "MONTANA", "NORTH DAKOTA", "SOUTH DAKOTA", "VERMONT", "WEST VIRGINIA", "WYOMING")))
 
 # create four groups
