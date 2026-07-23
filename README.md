@@ -26,7 +26,7 @@ The MPI data source will take longer to copy from the MPI website. Each state ta
 The datasets for this paper are relatively small, so we offer readers the opportunity to run our full codebase as our demo for reproducibility. The order, expected runtime, and expected outputs of the various files are below.
 
 Set your working directory to the main project directory (not the "do" directory) before running .R files. 
-Knit all .Rmd files to run -- they will use the "do" directory.
+Knit all .Rmd files to run -- they will use the "do" directory as their working directory automatically.
 
 ### Running the code files
 * 00_clean_arrests_threat_gender_age.R cleans the raw arrests data. For details on the cleaning process and more information on how many individuals are cut from the dataset at each cleaning step, see 0.1_paper_numbers.Rmd, which outputs more information about this cleaning process. Expected output: data/processed/ddp_arrests_state_threat_gender_age_cleaned.dta. Time to run: 30 seconds.
