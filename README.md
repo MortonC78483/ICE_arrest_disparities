@@ -29,6 +29,8 @@ Set your working directory to the main project directory (not the "do" directory
 Knit all .Rmd files to run -- they will use the "do" directory as their working directory automatically.
 
 ### Running the code files
+First, obtain a Census API key. To do so, go to https://api.census.gov/data/key_signup.html and request a key. Go to your email and activate the key.Run census_api_key("YOUR_KEY", install = TRUE, overwrite = TRUE) in your R console.
+
 * 00_clean_arrests_threat_gender_age.R cleans the raw arrests data. For details on the cleaning process and more information on how many individuals are cut from the dataset at each cleaning step, see 0.1_paper_numbers.Rmd, which outputs more information about this cleaning process. Expected output: data/processed/ddp_arrests_state_threat_gender_age_cleaned.dta. Time to run: 30 seconds.
 * 01_make_glm_traj.R creates the panel data trajectories with threat level, arrest type, and conviction status by state and AOR using raw denominator data and the cleaned arrest data. Users should run this file twice, once with filter_LA = F and AOR = F (expected output: data/processed/glm_trajectory_type_threatlevel_convicted_ACS_MPI.csv), and once with filter_LA = F and AOR = T (expected output: data/processed/glm_trajectory_type_threatlevel_convicted_ACS_MPI_AOR.csv). Time to run: 30 seconds per input combination.
 * 02_make_table.Rmd makes tables 1 and accompanying supplement table, which summarize changes in arrest rates pre- and post-inauguration using MPI and ACS denominators respectively. Expected output: prints two tables, one for the main text (MPI denominators) and one for the supplement (ACS denominators). Time to run: 30 seconds.

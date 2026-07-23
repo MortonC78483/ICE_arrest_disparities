@@ -21,9 +21,6 @@ raw_arrests <- read_parquet("data/raw/arrests-latest.parquet") %>%
 raw_arrests <- raw_arrests %>%
   mutate(aor_short = sub(" Area of Responsibility", "", ApprehensionAOR))
 
-#raw_arrests = raw_arrests[(!(is.na(raw_arrests$aor_short) | 
-#                               raw_arrests$aor_short %in% c("", "HQ"))),]
-
 raw_arrests[is.na(raw_arrests$apprehension_state),]$apprehension_state = ""
 
 raw_arrests$state_clean = raw_arrests$apprehension_state
@@ -44,18 +41,6 @@ raw_arrests <- raw_arrests |>
 raw_arrests[is.na(raw_arrests$aor_short),]$aor_short = ""
 raw_arrests[raw_arrests$aor_short == "HQ",]$aor_short = ""
 summary(as.factor(raw_arrests$aor_short))
-
-# raw_arrests %>%
-#   filter(aor_short == "San Francisco" & state_clean == "") %>%
-#   filter((as.Date(ApprehensionDate) >= as.Date("2023-11-27")) &
-#            (as.Date(ApprehensionDate) <= as.Date("2026-03-10")))
-# 
-# raw_arrests %>%
-#   filter(aor_short == "San Francisco" & state_clean %in% c("CALIFORNIA", "HAWAII")) %>%
-#   filter((as.Date(ApprehensionDate) >= as.Date("2023-11-27")) &
-#            (as.Date(ApprehensionDate) <= as.Date("2026-03-10"))) %>%
-#   group_by(state_clean) %>%
-#   summarize(n = n())
 
 raw_arrests <- raw_arrests |>
   mutate(aor_short = case_when(

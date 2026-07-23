@@ -9,12 +9,6 @@ library(stringr)
 library(tidycensus)
 library(dplyr)
 
-#### OPTION TO FILTER TO LA ONLY ####
-filter_LA = FALSE
-
-#### OPTION FOR AOR INSTEAD OF STATE ####
-AOR = TRUE
-
 #### constants from disparity_helpers.py ####
 INAUG_DATE = "2025-01-20"
 WINDOW_DAYS = 60
@@ -133,11 +127,6 @@ get_alt_method <- function(method){
 
 # load arrests dataset
 arrests <- read_dta("data/processed/ddp_arrests_state_threat_gender_age_cleaned.dta") 
-
-if(filter_LA){
-  arrests <- arrests %>%
-  filter(aor_short == "Los Angeles")
-}
 
 arrests <- arrests %>%
   filter((year(ymd(ApprehensionDate)) - birth_year) >= 18) %>% # filter out children
@@ -309,11 +298,6 @@ if(AOR){
     select(GEOID, aor) %>%
     filter(GEOID %in% valid_county_fips$GEOID)
   
-  if(filter_LA) {
-    aor_county_crosswalk <- aor_county_crosswalk %>%
-      filter(aor == "Los Angeles")
-  }
-  
   aor_county_crosswalk <- aor_county_crosswalk %>%
     mutate(aor = ifelse(aor == "St Paul", "St. Paul", aor_county_crosswalk$aor))
   
@@ -367,20 +351,10 @@ if(nrow(arrests_with_denom_na) > 0){
 arrests_with_denom$pop_MPI <- replace_na(arrests_with_denom$pop_MPI, 1000)
 #25 AORs, 6 regions, 3 methods, 3 alt methods, 3 threat levels, 2 conv status, 10 periods = 81000
 
-if (filter_LA){
-  if (AOR){
-    print("writing LA csv (AOR level)")
-    write_csv(arrests_with_denom, "data/processed/glm_trajectory_type_threatlevel_convicted_ACS_MPI_LAonly_AOR.csv")
-  } else{
-    print("writing LA csv (state level)")
-    write_csv(arrests_with_denom, "data/processed/glm_trajectory_type_threatlevel_convicted_ACS_MPI_LAonly.csv")
-  }
+if (AOR){
+  print("writing full csv (AOR level)")
+  write_csv(arrests_with_denom, "data/processed/glm_trajectory_type_threatlevel_convicted_ACS_MPI_AOR.csv")
 } else{
-  if (AOR){
-    print("writing full csv (AOR level)")
-    write_csv(arrests_with_denom, "data/processed/glm_trajectory_type_threatlevel_convicted_ACS_MPI_AOR.csv")
-  } else{
-    print("writing full csv (state level)")
-    write_csv(arrests_with_denom, "data/processed/glm_trajectory_type_threatlevel_convicted_ACS_MPI.csv")
-  }
+  print("writing full csv (state level)")
+  write_csv(arrests_with_denom, "data/processed/glm_trajectory_type_threatlevel_convicted_ACS_MPI.csv")
 }
