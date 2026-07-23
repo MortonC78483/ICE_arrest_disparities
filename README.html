@@ -378,28 +378,27 @@ available online. Processes to obtain datasets are described below,
 along with the filepaths they should be set to within the data folder in
 order to proceed with running the rest of the codebase.</p>
 <ul>
-<li>data/arrests-latest.parquet
+<li>data/raw/arrests-latest.parquet
 <ul>
-<li>Navigate to <a href="https://deportationdata.org/data/processed/ice.html" class="uri">https://deportationdata.org/data/processed/ice.html</a>,
-download the “Arrests” dataset from Oct. 2022 to Mar. 2026. At the time
-of writing this paper, this was the most recent dataset available. Save
-the dataset to “data/arrests-latest.parquet”.</li>
+<li>Navigate to <a href="https://github.com/deportationdata/ice/blob/71fb6ae39e0aeff8a5c7ad2b071153a235c59797/data/arrests-latest.parquet" class="uri">https://github.com/deportationdata/ice/blob/71fb6ae39e0aeff8a5c7ad2b071153a235c59797/data/arrests-latest.parquet</a>,
+download the “arrests-latest.parquet” dataset. At the time of writing
+this paper, this was the most recent dataset available. Save the dataset
+to “data/raw/arrests-latest.parquet”.</li>
 </ul></li>
-<li>data/ACS/county_birth_region_2023_raw.csv
+<li>data/raw/county_birth_region_2023_raw.csv
 <ul>
-<li>Navigate to <a href="https://data.census.gov/table/ACSDT5Y202.B05006" class="uri">https://data.census.gov/table/ACSDT5Y202.B05006</a>, click
-“More Tools” -&gt; “Geos” -&gt; “County” -&gt; “All Counties Within the
-United States and Puerto Rico” -&gt; close window, then click “Download
-Table” -&gt; “Download .zip”. Save the .csv file in the downloaded
-dataset to “data/ACS/county_birth_region_2023_raw.csv”.</li>
+<li>Navigate to <a href="https://data.census.gov/table/ACSDT5Y2023.B05006?g=010XX00US$0500000" class="uri">https://data.census.gov/table/ACSDT5Y2023.B05006?g=010XX00US$0500000</a>,
+then click “Download Table” -&gt; “Download .zip”. Save the .csv file in
+the downloaded dataset as “data/raw/county_birth_region_2023_raw.csv”,
+which requires changing the name.</li>
 </ul></li>
-<li>data/crosswalks/ice-aor-county-shp.parquet
+<li>data/raw/ice-aor-county-shp.parquet
 <ul>
 <li>Navigate to <a href="https://github.com/deportationdata/ice-offices/tree/refs/heads/main/data" class="uri">https://github.com/deportationdata/ice-offices/tree/refs/heads/main/data</a>
 and download the April 16, 2026 “ice-aor-county-shp.parquet” file. Save
-the file to “data/crosswalks/ice-aor-county-shp.parquet”.</li>
+the file to “data/raw/ice-aor-county-shp.parquet”.</li>
 </ul></li>
-<li>data/MPI/mpi_state_region.csv
+<li>data/raw/mpi_state_region.csv
 <ul>
 <li>Navigate to <a href="https://www.migrationpolicy.org/data-tool/unauthorized-immigrants" class="uri">https://www.migrationpolicy.org/data-tool/unauthorized-immigrants</a>,
 use the state profile navigation to create a dataset with columns
@@ -409,7 +408,7 @@ options “Mexico and Central America,” “Caribbean,” “South America,”
 containing the MPI unauthorized population. Entries without an MPI
 estimate are omitted (e.g. Alaska only has entries for Mexico and
 Central America, Europe/Canada/Oceania, and Asia). Save the dataset to
-“data/MPI/mpi_state_region.csv”.</li>
+“data/raw/mpi_state_region.csv”.</li>
 </ul></li>
 </ul>
 <p>Downloading the raw data sources should not take longer than 5
@@ -425,6 +424,8 @@ website.</p>
 the opportunity to run our full codebase as our demo for
 reproducibility. The order, expected runtime, and expected outputs of
 the various files are below.</p>
+<p>Set your working directory to the main project directory (not the
+“do” directory) before running files.</p>
 <div id="running-the-code-files" class="section level3">
 <h3>Running the code files</h3>
 <ul>
@@ -433,16 +434,16 @@ For details on the cleaning process and more information on how many
 individuals are cut from the dataset at each cleaning step, see
 0.1_paper_numbers.Rmd, which outputs more information about this
 cleaning process. Expected output:
-data/ddp_arrests_state_threat_gender_age_cleaned.dta. Time to run: 30
-seconds.</li>
+data/processed/ddp_arrests_state_threat_gender_age_cleaned.dta. Time to
+run: 30 seconds.</li>
 <li>01_make_glm_traj.R creates the panel data trajectories with threat
 level, arrest type, and conviction status by state and AOR using raw
 denominator data and the cleaned arrest data. Users should run this file
 twice, once with filter_LA = F and AOR = F (expected output:
-data/glm_trajectory_type_threatlevel_convicted_ACS_MPI.csv), and once
-with filter_LA = F and AOR = T (expected output:
-data/glm_trajectory_type_threatlevel_convicted_ACS_MPI_AOR.csv). Time to
-run: 30 seconds per input combination.</li>
+data/processed/glm_trajectory_type_threatlevel_convicted_ACS_MPI.csv),
+and once with filter_LA = F and AOR = T (expected output:
+data/processed/glm_trajectory_type_threatlevel_convicted_ACS_MPI_AOR.csv).
+Time to run: 30 seconds per input combination.</li>
 <li>02_make_table.Rmd makes tables 1 and accompanying supplement table,
 which summarize changes in arrest rates pre- and post-inauguration using
 MPI and ACS denominators respectively. Expected output: prints two
@@ -483,6 +484,12 @@ people). This shows that the differences observed nationally in figure 3
 hold in smaller geographies. This result is briefly discussed in the
 paper but not presented quantitatively. Time to run: 30 seconds.</li>
 </ul>
+</div>
+<div id="instructions-for-use" class="section level3">
+<h3>Instructions for use</h3>
+<p>Once raw data have been formatted as described above, running the
+code files in order will reproduce all figures, tables, and numbers
+reported in the paper.</p>
 </div>
 </div>
 </div>

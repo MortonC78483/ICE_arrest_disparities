@@ -13,7 +13,7 @@ library(dplyr)
 filter_LA = FALSE
 
 #### OPTION FOR AOR INSTEAD OF STATE ####
-AOR = TRUE
+AOR = FALSE
 
 #### constants from disparity_helpers.py ####
 INAUG_DATE = "2025-01-20"
@@ -88,7 +88,7 @@ fips_codes <- fips_codes %>%
   mutate(state_name = toupper(state_name)) %>%
   unique()
 
-valid_county_fips = read_parquet("data/crosswalks/ice-aor-county-shp.parquet") %>%
+valid_county_fips = read_parquet("data/raw/ice-aor-county-shp.parquet") %>%
   select("STATEFP", "COUNTYFP", "NAME", "GEOID", "STATE_NAME") %>%
   mutate(STATE_NAME = toupper(STATE_NAME)) %>%
   filter(STATE_NAME %in% STATES)
@@ -132,7 +132,7 @@ get_alt_method <- function(method){
 }
 
 # load arrests dataset
-arrests <- read_dta("data/ddp_arrests_state_threat_gender_age_cleaned.dta") 
+arrests <- read_dta("data/processed/ddp_arrests_state_threat_gender_age_cleaned.dta") 
 
 if(filter_LA){
   arrests <- arrests %>%
@@ -196,7 +196,7 @@ if(AOR){
 }
 
 #### MPI dataset ####
-mpi_region <- read_csv("data/MPI/mpi_state_region.csv") %>%
+mpi_region <- read_csv("data/raw/mpi_state_region.csv") %>%
   mutate(state = toupper(state)) %>%
   rename("pop_MPI" = "unauth_pop") %>%
   mutate(region = toupper(region), 
@@ -241,7 +241,7 @@ if(AOR){
     filter(GEOID %in% valid_county_fips$GEOID)
   
   # contains GEOID to AOR name, plus population of the GEOID
-  aor_county <- read_parquet("data/crosswalks/ice-aor-county-shp.parquet") %>%
+  aor_county <- read_parquet("data/raw/ice-aor-county-shp.parquet") %>%
     select(GEOID, area_of_responsibility_name) %>%
     rename("aor" = "area_of_responsibility_name") %>%
     mutate(state_fips = substr(GEOID, 1, 2)) 
@@ -260,8 +260,6 @@ if(AOR){
   state_in_aor <- aor_county %>%
     group_by(aor, state_fips) %>%
     summarize(pop_state_in_aor = sum(pop_total))
-  
-  view(fips_codes)
   
   state_region_crosswalk <- fips_codes %>%
     filter(state_name %in% STATES) %>%
@@ -293,9 +291,19 @@ if(AOR){
 # B05006_160E Mexico
 # B05006_164E South America
 # B05006_176E North America
-acs_region <- read_csv("data/ACS/county_birth_region_2023_raw.csv")
+acs_region <- read_csv("data/raw/county_birth_region_2023_raw.csv") %>%
+  filter(GEO_ID != "Geography") %>%
+  rename("GEOID" = "GEO_ID") %>%
+  mutate(GEOID = substr(GEOID, nchar(GEOID)-4, nchar(GEOID)),
+         STATEFP = substr(GEOID, 1, 2)) %>%
+  select(c("GEOID", "STATEFP", "B05006_002E", "B05006_047E", "B05006_095E", 
+           "B05006_130E", "B05006_140E", "B05006_154E", 
+           "B05006_164E", "B05006_176E")) %>%
+  mutate(across(3:last_col(), as.numeric))
+  
+
 if(AOR){
-  aor_county_crosswalk <- read_parquet("data/crosswalks/ice-aor-county-shp.parquet") %>%
+  aor_county_crosswalk <- read_parquet("data/raw/ice-aor-county-shp.parquet") %>%
     select(GEOID, area_of_responsibility_name) %>%
     rename("aor" = "area_of_responsibility_name") %>%
     select(GEOID, aor) %>%
@@ -310,9 +318,6 @@ if(AOR){
     mutate(aor = ifelse(aor == "St Paul", "St. Paul", aor_county_crosswalk$aor))
   
   acs_region <- acs_region %>%
-    select(c("GEOID", "B05006_002E", "B05006_047E", "B05006_095E", 
-             "B05006_130E", "B05006_140E", "B05006_154E", 
-             "B05006_164E", "B05006_176E")) %>%
     merge(aor_county_crosswalk, by = "GEOID") %>% # we need to get counties assigned to AORs
     group_by(aor) %>%
     summarize(across(where(is.double), sum)) %>%
@@ -327,10 +332,6 @@ if(AOR){
 
   } else{
   acs_region <- acs_region %>%
-    select(c("STATEFP", "B05006_002E", "B05006_047E", "B05006_095E", 
-             "B05006_130E", "B05006_140E", "B05006_154E", 
-             #"B05006_160E", 
-             "B05006_164E", "B05006_176E")) %>%
     group_by(STATEFP) %>%
     summarize(across(where(is.double), sum)) %>%
     mutate(EUCA = B05006_002E+B05006_130E+B05006_176E) %>%
@@ -339,7 +340,6 @@ if(AOR){
            "CARIBBEAN" = "B05006_140E",
            "MCA" = "B05006_154E", 
            "SA" = "B05006_164E") %>%
-    #mutate(CA = CA - MEX) %>%
     select(-c(B05006_002E,B05006_130E,B05006_176E)) %>%
     merge(fips_codes, by.x = "STATEFP", by.y = "state_code") %>%
     select(-STATEFP) %>%
@@ -370,17 +370,17 @@ arrests_with_denom$pop_MPI <- replace_na(arrests_with_denom$pop_MPI, 1000)
 if (filter_LA){
   if (AOR){
     print("writing LA csv (AOR level)")
-    write_csv(arrests_with_denom, "data/glm_trajectory_type_threatlevel_convicted_ACS_MPI_LAonly_AOR.csv")
+    write_csv(arrests_with_denom, "data/processed/glm_trajectory_type_threatlevel_convicted_ACS_MPI_LAonly_AOR.csv")
   } else{
     print("writing LA csv (state level)")
-    write_csv(arrests_with_denom, "data/glm_trajectory_type_threatlevel_convicted_ACS_MPI_LAonly.csv")
+    write_csv(arrests_with_denom, "data/processed/glm_trajectory_type_threatlevel_convicted_ACS_MPI_LAonly.csv")
   }
 } else{
   if (AOR){
     print("writing full csv (AOR level)")
-    write_csv(arrests_with_denom, "data/glm_trajectory_type_threatlevel_convicted_ACS_MPI_AOR.csv")
+    write_csv(arrests_with_denom, "data/processed/glm_trajectory_type_threatlevel_convicted_ACS_MPI_AOR.csv")
   } else{
     print("writing full csv (state level)")
-    write_csv(arrests_with_denom, "data/glm_trajectory_type_threatlevel_convicted_ACS_MPI.csv")
+    write_csv(arrests_with_denom, "data/processed/glm_trajectory_type_threatlevel_convicted_ACS_MPI.csv")
   }
 }

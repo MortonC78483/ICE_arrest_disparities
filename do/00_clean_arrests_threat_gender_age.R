@@ -5,7 +5,7 @@ library(arrow)
 library(dplyr)
 
 # load raw arrests data to get the other variables
-raw_arrests <- read_parquet("data/arrests-latest.parquet") %>%
+raw_arrests <- read_parquet("data/raw/arrests-latest.parquet") %>%
  filter((as.Date(apprehension_date) >= as.Date("2022-10-01")) &
         (as.Date(apprehension_date) <= as.Date("2026-03-10"))) %>%
   rename("ApprehensionDate" = "apprehension_date", 
@@ -86,7 +86,7 @@ summary(as.factor(raw_arrests$aor_short))
 raw_arrests <- raw_arrests %>%
   filter(aor_short != "" & state_clean != "")
 
-write_dta(raw_arrests, "data/ddp_arrests_state_threat_gender_age_cleaned.dta")
+write_dta(raw_arrests, "data/processed/ddp_arrests_state_threat_gender_age_cleaned.dta")
 
 summary(as.factor(raw_arrests$aor_short))
 summary(as.factor(raw_arrests$state_clean))
