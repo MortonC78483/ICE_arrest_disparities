@@ -1,0 +1,13 @@
+To download raw data files:
+
+data/raw/arrests-latest.parquet
+    - Navigate to https://github.com/deportationdata/ice/blob/71fb6ae39e0aeff8a5c7ad2b071153a235c59797/data/arrests-latest.parquet, download the "arrests-latest.parquet" dataset. At the time of writing this paper, this was the most recent dataset available. Save the dataset to “data/raw/arrests-latest.parquet”.
+
+data/raw/county_birth_region_2023_raw.csv
+    - Navigate to https://data.census.gov/table/ACSDT5Y2023.B05006?g=010XX00US$0500000, then click “Download Table” -> “Download .zip”. Save the .csv file in the downloaded dataset as “data/raw/county_birth_region_2023_raw.csv”, which requires changing the name.
+
+data/raw/ice-aor-county-shp.parquet
+    - Navigate to https://github.com/deportationdata/ice-offices/tree/refs/heads/main/data and download the April 16, 2026 “ice-aor-county-shp.parquet” file. Save the file to “data/raw/ice-aor-county-shp.parquet”.
+
+data/raw/mpi_state_region.csv
+    - Navigate to https://www.migrationpolicy.org/data-tool/unauthorized-immigrants, use the state profile navigation to create a dataset with columns “state” (containing title case state name), “region” containing region options “Mexico and Central America,” “Caribbean,” “South America,” “Europe/Canada/Oceania,” “Asia,” and “Africa,” and “unauth_pop” containing the MPI unauthorized population. Entries without an MPI estimate are omitted (e.g. Alaska only has entries for Mexico and Central America, Europe/Canada/Oceania, and Asia). Save the dataset to “data/raw/mpi_state_region.csv”.
