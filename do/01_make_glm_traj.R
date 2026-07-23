@@ -13,7 +13,7 @@ library(dplyr)
 filter_LA = FALSE
 
 #### OPTION FOR AOR INSTEAD OF STATE ####
-AOR = FALSE
+AOR = TRUE
 
 #### constants from disparity_helpers.py ####
 INAUG_DATE = "2025-01-20"

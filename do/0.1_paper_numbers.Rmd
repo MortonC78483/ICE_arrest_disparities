@@ -21,7 +21,7 @@ library(scales)
 
 Our primary data source is administrative from the Deportation Data Project (DDP) obtained through FOIA litigation, on the universe of ICE Enforcement and Removal Operations from [DATE to DATE] (n=XXX). 
 ```{r }
-raw_data <- read_parquet("../data/arrests-latest.parquet")
+raw_data <- read_parquet("../data/raw/arrests-latest.parquet")
 
 # plot hist of apprehension dates
 hist(as.Date(raw_data$apprehension_date), breaks = 20)
@@ -125,7 +125,7 @@ STATES = c(toupper(state.name), "DISTRICT OF COLUMBIA")
 ```
 
 ```{r}
-raw_arrests <- read_parquet("../data/arrests-latest.parquet") %>%
+raw_arrests <- read_parquet("../data/raw/arrests-latest.parquet") %>%
   rename("ApprehensionDate" = "apprehension_date", 
          "ApprehensionAOR" = "apprehension_aor",
          "ApprehensionMethod" = "apprehension_method",
