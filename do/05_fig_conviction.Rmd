@@ -1,0 +1,528 @@
+---
+title: "Fig_conviction"
+author: "Claire Morton"
+date: "2026-06-12"
+output: pdf_document
+---
+
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(broom)
+library(dplyr)
+library(tidyr)
+library(stringr)
+library(ggplot2)
+library(ggpubr)
+library(fixest)
+library(mvtnorm)
+library(patchwork)
+library(readr)
+library(tidyverse)
+library(patchwork)
+```
+ 
+## Functions
+```{r functions, include = F}
+aggregate_data <- function(data, 
+                           cols_to_keep, 
+                           pop_col,
+                           agg_noneuca = TRUE){
+  
+  pop_cols <- c("pop_ACS", "pop_MPI")
+  
+  data_pop <- data %>% 
+    select(-setdiff(pop_cols, pop_col)) %>%
+    rename("pop" = !!sym(pop_col))
+  
+  raw_pop <- data_pop %>%
+    group_by(state, region) %>%
+    summarize(pop = first(pop), .groups = "drop")
+  
+  # find geographic keys
+  geo_keys <- intersect(cols_to_keep, c("state", "region"))
+  
+  # aggregate regions if requested
+  if(agg_noneuca){
+    data_pop <- data_pop %>% 
+      mutate(region = ifelse(region == "EUCA", "EUCA", "nonEUCA")) %>%
+      group_by(pick(-c(n_arrests, pop))) %>%
+      summarize(n_arrests = sum(n_arrests),
+                pop = sum(pop))
+    
+    raw_pop <- raw_pop %>% 
+      mutate(region = ifelse(region == "EUCA", "EUCA", "nonEUCA")) %>%
+      group_by(state, region) %>%
+      summarize(pop = sum(pop), .groups = "drop")
+  }
+  # population map
+  pop_map <- data_pop %>%
+    group_by(state, region, pop) %>%
+    slice_head(n = 1) %>%
+    ungroup() %>%
+    group_by_at(geo_keys) %>%
+    summarize(pop = sum(pop), .groups = "drop")
+  
+   # checksum value
+  checksum <- data_pop %>%
+    group_by(state, region, pop) %>%
+    slice_head(n=1) %>%
+    ungroup() %>%
+    group_by(region) %>%
+    summarize(pop_checksum = sum(pop), .groups = "drop")
+
+  # aggregate arrests, join population back in
+  data_pop <- data_pop %>%
+    group_by_at(cols_to_keep) %>%
+    summarize(n_arrests = sum(n_arrests, na.rm = TRUE), .groups = "drop") %>%
+    left_join(pop_map, by = geo_keys) %>%
+    mutate(ratio = n_arrests/pop*1000,
+           log_pop = log(pop))
+  
+  # checksum
+  total_aggregated <- data_pop %>%
+    group_by_at(geo_keys) %>%
+    summarize(pop = first(pop), .groups = "drop") %>%
+    pull(pop) %>%
+    sum(na.rm = TRUE)
+  total_checksum <- sum(checksum$pop_checksum, na.rm = TRUE)
+  if (!(dplyr::near(total_checksum, total_aggregated))) {
+    warning("Checksum Failed!")
+  }
+  
+  return(data_pop)
+}
+
+jackknife_supt <- function(fe_fit, model_fml, data, model_type = c("linear", "poisson"), extra_fml = NULL, do_se = TRUE, do_sensitivity = F, m_vals = c()) {
+  model_type <- match.arg(model_type)
+  coef0      <- coef(fe_fit)
+  states     <- unique(data$state)
+  n_states   <- length(states)
+
+  windows <- setdiff(min(as.numeric(as.character(data$window))):max(as.numeric(as.character(data$window))), -1)
+
+  if (do_se) {
+    jackknife_est_matrix <- t(sapply(states, function(dropped_state) {
+      sub_data <- subset(data, state != dropped_state)
+
+      if (model_type == "poisson") {
+        coef(fepois(model_fml, data = sub_data, offset = extra_fml, cluster = ~state))
+      } else {
+        coef(feols(model_fml, data = sub_data, weights = extra_fml, cluster = ~state))
+      }
+    }))
+
+    # calculate variance-covariance matrix
+    jackknife_est_means <- colMeans(jackknife_est_matrix)
+    vcov_unscaled       <- jackknife_est_matrix |>
+      scale(center = jackknife_est_means, scale = FALSE) |>
+      crossprod()
+    scaling_factor <- (n_states - 1) / n_states
+    vcov           <- scaling_factor * vcov_unscaled
+    se             <- sqrt(diag(vcov))
+
+    # Gaussian sup-t critical value
+    # (Montiel Olea & Plagborg-Møller 2019)
+    sims           <- rmvnorm(10000, sigma = cov2cor(vcov))
+    critical_value <- quantile(apply(abs(sims), 1, max), 0.95)
+
+    if (model_type == "poisson") {
+      supt <- tibble(window = windows,
+                     est    = exp(coef0), se = se,
+                     lower  = exp(coef0 - critical_value * se),
+                     upper  = exp(coef0 + critical_value * se))
+    } else {
+      supt <- tibble(window = windows,
+                     est    = coef0, 
+                     se = se,
+                     lower  = coef0 - critical_value * se,
+                     upper  = coef0 + critical_value * se)
+    }
+  } else {
+    est_val <- if (model_type == "poisson") exp(coef0) else coef0
+    supt    <- tibble(window = windows, est = est_val, se = 0, lower = est_val, upper = est_val)
+  }
+
+  ref_val <- if (model_type == "poisson") 1 else 0
+  output <- supt |>
+    bind_rows(tibble(window = -1, est = ref_val, se = 0, lower = ref_val, upper = ref_val)) |>
+    arrange(window)
+  
+   if(do_sensitivity){
+    honest_data <- output |> filter(window != -1) |> arrange(window)
+    honest_betahat <- honest_data$est
+    honest_sigma <- vcov
+    
+    numPrePeriods <- 6
+    numPostPeriods <- 7
+    pre_period_indices <- 1:numPrePeriods
+    l_vec <- rep(1 / numPostPeriods, numPostPeriods)
+    
+    # wald
+    pre_coef_names <- names(coef0)[1:numPrePeriods]
+    wald_test <- fixest::wald(fe_fit, keep = pre_coef_names, vcov = vcov)
+    print("Wald Pre-Trend Test")
+    print(wald_test)
+
+    delta_rm_results <- HonestDiD::createSensitivityResults_relativeMagnitudes(
+                                    betahat = honest_betahat,
+                                    sigma = honest_sigma,
+                                    numPrePeriods = numPrePeriods,
+                                    numPostPeriods = numPostPeriods,
+                                    l_vec = l_vec,
+                                    method = "C-LF",
+                                    Mbarvec = m_vals
+                                    )
+
+    print("M bar Results")
+    print(delta_rm_results)
+    
+  } 
+  return(output)
+  
+}
+
+event_study_plot <- function(estimates, pal, baseline = 0, show_guide = TRUE) {
+  if (!"conv_status" %in% colnames(estimates)) {
+    estimates <- estimates |> 
+      dplyr::mutate(conv_status = dplyr::if_else(stringr::str_detect(conv_method, "_conv"), "conv", "nonconv"))
+  }
+  
+  estimates |>
+    ggplot(aes(x = window, y = est, color = conv_method, group = conv_method)) +
+    geom_hline(yintercept = baseline, linetype = "dashed", color = "grey50") + 
+    geom_vline(xintercept = -0.5, linetype = "dashed", color = "grey50") +
+    geom_point(size = 2.5, position = position_dodge(0.3)) +
+    geom_errorbar(aes(ymin = lower, ymax = upper), linetype = "solid", linewidth = 0.8, position = position_dodge(0.3)) +
+    geom_line(linewidth = 0.8, position = position_dodge(0.3)) + 
+    labs(x = "Window",
+         y = "Difference in Arrests per 1k\nrelative to EUCA and window -1") +
+    scale_x_continuous(breaks = seq(min(estimates$window), max(estimates$window), by = 1)) +
+    scale_color_manual(values = pal, guide = if (show_guide) "legend" else "none") +
+    theme_classic() +
+    theme(legend.position = "bottom")
+}
+
+
+fit_diffindiff <- function(data, model_fml, extra_fml, model_type = c("linear", "poisson"), do_se = TRUE, do_sensitivity = F, m_vals = c()) {
+  model_type  <- match.arg(model_type)
+  method_vals <- unique(data$conv_method)
+  method_coefs <- list()
+
+  for (cur_method in method_vals) {
+    data_filtered <- data %>% filter(conv_method == cur_method)
+
+    if (model_type == "poisson") {
+      mod <- fepois(model_fml, data_filtered, offset = extra_fml)
+    } else {
+      mod <- feols(model_fml, data_filtered, weights = extra_fml, cluster = ~state)
+    }
+
+    method_coefs[[cur_method]] <- jackknife_supt(
+      fe_fit    = mod,
+      model_fml = model_fml,
+      data      = data_filtered,
+      model_type = model_type,
+      extra_fml = extra_fml,
+      do_se     = do_se,
+      do_sensitivity = do_sensitivity,
+      m_vals = m_vals
+    ) %>%
+      mutate(conv_method = cur_method)
+  }
+
+  return(bind_rows(method_coefs))
+}
+
+arrange_figure2 <- function(conv_method, conv_method_state, model_fml, wt_fml, model_type, title, do_se = TRUE, do_sensitivity = F, m_vals = c()) {
+  interaction_colors <- c(
+    "EUCA_nonconv"    = "#555555",
+    "EUCA_conv"       = "#BBBBBB",
+    "nonEUCA_nonconv" = "#004488",
+    "nonEUCA_conv"    = "#6699CC"
+  )
+  
+  clean_legend_labels <- c(
+    "EUCA, Non-Convicted",
+    "EUCA, Convicted",
+    "Non-EUCA, Non-Convicted",
+    "Non-EUCA, Convicted"
+  )
+  
+  pal_method <- c(
+    "CA_nonconv"  = "#004488", 
+    "CA_conv"     = "#6699CC",
+    "LEA_nonconv" = "#004488", 
+    "LEA_conv"    = "#6699CC"
+  )
+
+  baseline <- if_else(model_type == "poisson", 1, 0)
+  
+  if (model_type == "poisson") {
+    conv_method <- conv_method %>%
+      group_by(conv_method, region) %>%
+      mutate(ratio_baseline = ratio[window == -1],
+             ratio = ratio / ratio_baseline) %>%
+      ungroup()
+  }
+  
+  conv_method <- conv_method %>% 
+    mutate(
+      conv_status = if_else(str_detect(conv_method, "_conv"), "conv", "nonconv"),
+      color_group = paste0(region, "_", conv_status) 
+    )
+    
+  make_left_plot <- function(df_filtered) {
+    ggplot(df_filtered, aes(x = window, y = ratio, 
+                            group = interaction(conv_method, region), 
+                            color = color_group)) +
+      geom_hline(yintercept = baseline, linetype = "dashed", color = "grey50") +
+      geom_vline(xintercept = -0.5, linetype = "dashed", color = "grey50") +
+      geom_line(linewidth = 0.8) + 
+      scale_x_continuous(breaks = seq(min(conv_method$window), max(conv_method$window), by = 1)) +
+      scale_color_manual(
+        name = "Region & Status", 
+        values = interaction_colors,
+        breaks = names(interaction_colors),
+        labels = clean_legend_labels
+      ) +
+      labs(x = "Window", y = "Arrests per 1k") +
+      theme_classic() + 
+      theme(legend.position = "bottom")
+  }
+  
+  plt.part_a <- make_left_plot(conv_method %>% filter(str_starts(conv_method, "CA")))
+  plt.part_c <- make_left_plot(conv_method %>% filter(str_starts(conv_method, "LEA")))
+  
+  # y-axis limits for left side
+  ylim_ac    <- range(c(plt.part_a$data$ratio, plt.part_c$data$ratio), na.rm = TRUE)
+  plt.part_a <- plt.part_a + coord_cartesian(ylim = ylim_ac)
+  plt.part_c <- plt.part_c + coord_cartesian(ylim = ylim_ac)
+
+  model_list <- conv_method_state %>%
+    group_split(conv_method) %>%
+    map_dfr(function(.x) {
+    current_method <- unique(.x$conv_method)
+
+    message("Fitting model for conv_method: ", current_method)
+
+    fit_diffindiff(.x, model_fml, wt_fml, model_type = model_type, do_se = do_se, do_sensitivity = do_sensitivity, m_vals = m_vals) %>% 
+      mutate(conv_method = current_method)
+    }) %>%
+    mutate(conv_status = if_else(str_detect(conv_method, "_conv"), "conv", "nonconv"))
+
+  possible_y_cols <- c("est", "lower", "upper", "estimate", "conf.low", "conf.high")
+  found_cols      <- intersect(possible_y_cols, colnames(model_list))
+  ylim_bd         <- NULL
+  
+  tag_style_ac <- theme(
+    plot.title.position = "panel",
+    plot.tag.position = c(0.08, 0.98),
+    plot.tag = element_text(size = 12, face = "bold", hjust = 0)
+  )
+  
+  tag_style_bd <- theme(
+    plot.title.position = "panel",
+    plot.tag.position = c(0.12, 0.98), 
+    plot.tag = element_text(size = 12, face = "bold", hjust = 0)
+  )
+  
+  if (length(found_cols) > 0) {
+    raw_range <- range(model_list[, found_cols], na.rm = TRUE)
+    padding   <- diff(raw_range) * 0.05
+    ylim_bd   <- c(raw_range[1] - padding, raw_range[2] + padding)
+  }
+
+  plt.part_b <- event_study_plot(model_list %>% filter(str_starts(conv_method, "CA")), 
+                                 pal = pal_method, baseline = baseline, show_guide = FALSE) + 
+    labs(tag = "b")+ 
+    tag_style_bd
+  
+  plt.part_d <- event_study_plot(model_list %>% filter(str_starts(conv_method, "LEA")), 
+                                 pal = pal_method, baseline = baseline, show_guide = FALSE)+
+    labs(tag = "d")+ 
+    tag_style_bd
+  
+  if (!is.null(ylim_bd)) {
+    plt.part_b <- plt.part_b + coord_cartesian(ylim = ylim_bd)
+    plt.part_d <- plt.part_d + coord_cartesian(ylim = ylim_bd)
+  }
+    
+  plt.part_a <- plt.part_a + ggtitle("Community Arrests") + 
+    theme(plot.title = element_text(size = 12, face = "bold", hjust = 0.5)) + 
+    labs(tag = "a")+ 
+    tag_style_ac
+  
+  plt.part_c <- plt.part_c + ggtitle("Law Enforcement Assisted Arrests") + 
+    theme(plot.title = element_text(size = 12, face = "bold", hjust = 0.5)) + 
+    labs(tag = "c")+ 
+    tag_style_ac
+  
+  fig <- (plt.part_a + plt.part_b + plt.part_c + plt.part_d) +
+    plot_layout(
+      ncol = 2,
+      guides = "collect",
+      axis_titles = "collect"
+    ) +
+    plot_annotation(
+      tag_levels = "a",
+      title = title,
+      theme = theme(
+        plot.title = element_text(size = 14, face = "bold", hjust = 0.5),
+        legend.position = "bottom"
+      )
+    )
+  
+  return(fig)
+}
+```
+
+```{r}
+#### CONSTANTS ####
+wt_fml <- as.formula("~ pop")
+model_fml <- as.formula(
+  paste0("ratio ~ i(window, region, ref = -1, ref2 = 'EUCA') | region + window")
+)
+
+
+pois_model_fml <- as.formula(
+  paste0("n_arrests ~ i(window, region, ref = -1, ref2 = 'EUCA') | region + window")
+)
+offset_fml <- as.formula("~log_pop")
+
+```
+
+```{r, main_fig, echo = F}
+trajectory <- read_csv("../data/glm_trajectory_type_threatlevel_convicted_ACS_MPI.csv")
+
+# create four groups
+trajectory <- trajectory %>%
+  mutate(conv_method = ifelse(method == "LEA", 
+                              ifelse(convicted == 1, "LEA_conv", "LEA_nonconv"),
+                              ifelse(method == "CA", 
+                                     ifelse(convicted == 1, "CA_conv", "CA_nonconv"),
+                                     NA)))
+
+
+conv_method <- aggregate_data(trajectory, c("conv_method", "region", "window"), 
+                                      "pop_MPI", 
+                                      TRUE) %>%
+  filter(!is.na(conv_method))
+
+conv_method_state <- aggregate_data(trajectory, c("conv_method", "region", "state", "window"), 
+                                      "pop_MPI", 
+                                      TRUE) %>%
+  filter(!is.na(conv_method))
+
+arrange_figure2(conv_method, conv_method_state, model_fml, wt_fml, "linear", "", do_sensitivity = T, m_vals = c(.4, .5, 1.1, 1.2, 1.7, 1.8, 2.3, 2.4))
+ggsave("../figures/main_text/mpi_denoms_fig2.pdf", height = 5.5, width = 9)
+
+conv_method <- aggregate_data(trajectory, c("conv_method", "region", "window"), 
+                                      "pop_ACS", 
+                                      TRUE) %>%
+  filter(!is.na(conv_method))
+
+conv_method_state <- aggregate_data(trajectory, c("conv_method", "region", "state", "window"), 
+                                      "pop_ACS", 
+                                      TRUE) %>%
+  filter(!is.na(conv_method))
+
+arrange_figure2(conv_method, conv_method_state, model_fml, wt_fml, "linear", "")
+ggsave("../figures/supplement/acs_denoms_fig2.pdf", height = 5.5, width = 9)
+
+arrange_figure2(conv_method, conv_method_state, pois_model_fml, offset_fml, "poisson", "")
+ggsave("../figures/supplement/multiplicative_fig2.pdf", height = 5.5, width = 9)
+
+```
+
+Test for significance
+```{r, sig_test, echo = F}
+trajectory <- read_csv("../data/glm_trajectory_type_threatlevel_convicted_ACS_MPI.csv")
+
+# create four groups
+trajectory <- trajectory %>%
+  mutate(conv_method = ifelse(method == "LEA", 
+                              ifelse(convicted == 1, "LEA_conv", "LEA_nonconv"),
+                              ifelse(method == "CA", 
+                                     ifelse(convicted == 1, "CA_conv", "CA_nonconv"),
+                                     NA)))
+
+conv_method_state <- aggregate_data(trajectory, c("conv_method", "region", "state", "window"), 
+                                      "pop_MPI", 
+                                      TRUE) %>%
+  filter(!is.na(conv_method)) %>%
+  filter(window >= -1) %>%
+  mutate(window = ifelse(window < 0, -1, 0)) %>%
+  group_by(region, window, pop, state, conv_method) %>%
+  summarize(n_arrests = sum(n_arrests)) %>%
+  mutate(ratio = n_arrests/pop*1000)
+  
+return_p_value <- function(data){
+  mod <- feols(model_fml, data, weights = wt_fml, cluster = ~state)
+  states <- unique(data$state)
+  n_states <- length(states)
+  jackknife_est_matrix <- t(sapply(states, function(dropped_state) {
+    sub_data <- subset(data, state != dropped_state)
+    coef(feols(model_fml, data = sub_data, weights = wt_fml, cluster = ~state))
+  }))
+  var = sum((jackknife_est_matrix - mean(jackknife_est_matrix))^2)*(n_states-1)/(n_states )
+  se = sqrt(var)
+  z = mean(jackknife_est_matrix)/se
+  print(pnorm(-abs(z))*2)
+  
+  c(mean(jackknife_est_matrix),  mean(jackknife_est_matrix) - 1.96*se,  mean(jackknife_est_matrix) + 1.96*se)
+}
+
+print("LEA conv:")
+return_p_value(conv_method_state %>% filter(conv_method == "LEA_conv"))
+
+print("LEA nonconv:")
+return_p_value(conv_method_state %>% filter(conv_method == "LEA_nonconv"))
+
+print("CA conv:")
+return_p_value(conv_method_state %>% filter(conv_method == "CA_conv"))
+
+print("CA nonconv:")
+return_p_value(conv_method_state %>% filter(conv_method == "CA_nonconv"))
+```
+
+```{r, fig_remove_states, echo = F}
+trajectory <- read_csv("../data/glm_trajectory_type_threatlevel_convicted_ACS_MPI.csv") %>%
+  filter(!(state %in% c("MAINE", "MONTANA", "NORTH DAKOTA", "SOUTH DAKOTA", "VERMONT", "WEST VIRGINIA", "WYOMING")))
+
+# create four groups
+trajectory <- trajectory %>%
+  mutate(conv_method = ifelse(method == "LEA", 
+                              ifelse(convicted == 1, "LEA_conv", "LEA_nonconv"),
+                              ifelse(method == "CA", 
+                                     ifelse(convicted == 1, "CA_conv", "CA_nonconv"),
+                                     NA)))
+
+
+conv_method <- aggregate_data(trajectory, c("conv_method", "region", "window"), 
+                                      "pop_MPI", 
+                                      TRUE) %>%
+  filter(!is.na(conv_method))
+
+conv_method_state <- aggregate_data(trajectory, c("conv_method", "region", "state", "window"), 
+                                      "pop_MPI", 
+                                      TRUE) %>%
+  filter(!is.na(conv_method))
+
+arrange_figure2(conv_method, conv_method_state, model_fml, wt_fml, "linear", "", do_sensitivity = F)
+
+conv_method <- aggregate_data(trajectory, c("conv_method", "region", "window"), 
+                                      "pop_ACS", 
+                                      TRUE) %>%
+  filter(!is.na(conv_method))
+
+conv_method_state <- aggregate_data(trajectory, c("conv_method", "region", "state", "window"), 
+                                      "pop_ACS", 
+                                      TRUE) %>%
+  filter(!is.na(conv_method))
+
+arrange_figure2(conv_method, conv_method_state, model_fml, wt_fml, "linear", "")
+
+arrange_figure2(conv_method, conv_method_state, pois_model_fml, offset_fml, "poisson", "")
+
+```
