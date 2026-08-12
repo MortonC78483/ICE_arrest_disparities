@@ -22,13 +22,13 @@ LEA_METHODS = c('287(g) Program','Anti-Smuggling','CAP Federal Incarceration','C
 
 CA_METHODS = c('Located','Non-Custodial Arrest','Worksite Enforcement')
 
-ALTERNATIVE_LEA_METHODS = c('287(g) Program','CAP Federal Incarceration','CAP Local Incarceration',
-                            'CAP State Incarceration','Criminal Alien Program',
-                            'Law Enforcement Agency Response Unit','Organized Crime Drug Enforcement Task Force',
-                            'Other Agency (turned over to INS)','Probation and Parole',
-                            'Custodial Arrest')
-
-ALTERNATIVE_CA_METHODS = c('Located','Non-Custodial Arrest','Worksite Enforcement')
+# ALTERNATIVE_LEA_METHODS = c('287(g) Program','CAP Federal Incarceration','CAP Local Incarceration',
+#                             'CAP State Incarceration','Criminal Alien Program',
+#                             'Law Enforcement Agency Response Unit','Organized Crime Drug Enforcement Task Force',
+#                             'Other Agency (turned over to INS)','Probation and Parole',
+#                             'Custodial Arrest')
+# 
+# ALTERNATIVE_CA_METHODS = c('Located','Non-Custodial Arrest','Worksite Enforcement')
 
   
 MCA = c('MEXICO','GUATEMALA','EL SALVADOR','HONDURAS','NICARAGUA','COSTA RICA','PANAMA','BELIZE')
@@ -115,18 +115,25 @@ get_method <- function(method){
   }
 }
 
-get_alt_method <- function(method){
-  if (method %in% ALTERNATIVE_LEA_METHODS){
-    return("LEA")
-  } else if (method %in% ALTERNATIVE_CA_METHODS){
-    return("CA")
-  } else{
-    return("OTHER")
-  }
-}
+# get_alt_method <- function(method){
+#   if (method %in% ALTERNATIVE_LEA_METHODS){
+#     return("LEA")
+#   } else if (method %in% ALTERNATIVE_CA_METHODS){
+#     return("CA")
+#   } else{
+#     return("OTHER")
+#   }
+# }
 
 # load arrests dataset
 arrests <- read_dta("data/processed/ddp_arrests_state_threat_gender_age_cleaned.dta") 
+
+if(remove_duplicates){
+  duplicates <- read_csv("data/processed/duplicates.csv")
+  
+  arrests <- arrests %>%
+    filter(!(unique_identifier %in% duplicates$unique_identifier))
+}
 
 arrests <- arrests %>%
   filter((year(ymd(ApprehensionDate)) - birth_year) >= 18) %>% # filter out children
@@ -138,7 +145,7 @@ arrests <- arrests %>%
                                ifelse(!is.na(case_threat_level) & case_threat_level == 2, 2, 0))) %>%
   mutate(citizenship_region = unlist(lapply(citizenship_country, get_region))) %>%
   mutate(method = unlist(lapply(ApprehensionMethod, get_method))) %>%
-  mutate(alt_method = unlist(lapply(ApprehensionMethod, get_alt_method))) %>%
+  #mutate(alt_method = unlist(lapply(ApprehensionMethod, get_alt_method))) %>%
   mutate(convicted = ifelse(ApprehensionCriminality == "1 Convicted Criminal", 1, 0)) %>%
   select(-c(ApprehensionMethod, citizenship_country, ApprehensionCriminality, case_threat_level))
 
@@ -169,19 +176,23 @@ if(AOR){
   arrests_type_convicted_summed <- arrests %>%
     rename("aor" = "aor_short",
            "region" = "citizenship_region") %>%
-    group_by(aor, region, window, convicted, threat_level, method, alt_method) %>%
+    group_by(aor, region, window, convicted, threat_level, method) %>%#, alt_method) %>%
     summarize(n_arrests = n()) %>%
     ungroup() %>%
-    tidyr::complete(aor, region, window, convicted, threat_level, method, alt_method, fill = list(n_arrests = 0))
+    tidyr::complete(aor, region, window, convicted, threat_level, method, 
+                    #alt_method, 
+                    fill = list(n_arrests = 0))
 } else{
   arrests_type_convicted_summed <- arrests %>%
     select(-aor_short) %>%
     rename("state" = "state_clean",
            "region" = "citizenship_region") %>%
-    group_by(state, region, window, convicted, threat_level, method, alt_method) %>%
+    group_by(state, region, window, convicted, threat_level, method) %>% #, alt_method) %>%
     summarize(n_arrests = n()) %>%
     ungroup() %>%
-    tidyr::complete(state, region, window, convicted, threat_level, method, alt_method, fill = list(n_arrests = 0))
+    tidyr::complete(state, region, window, convicted, threat_level, method, 
+                    #alt_method, 
+                    fill = list(n_arrests = 0))
 }
 
 #### MPI dataset ####
@@ -220,7 +231,7 @@ if(AOR){
   # apportion MPI data
   county_population <- get_acs(
     geography = "county",
-    variable = "B01001_001E",
+    variables = "B01001_001E",
     survey = "acs5",
     year = 2024
   )
@@ -351,9 +362,15 @@ if(nrow(arrests_with_denom_na) > 0){
 arrests_with_denom$pop_MPI <- replace_na(arrests_with_denom$pop_MPI, 1000)
 #25 AORs, 6 regions, 3 methods, 3 alt methods, 3 threat levels, 2 conv status, 10 periods = 81000
 
-if (AOR){
+if (AOR & remove_duplicates){
+  print("writing duplicates removed csv (AOR level)")
+  write_csv(arrests_with_denom, "data/processed/glm_trajectory_type_threatlevel_convicted_ACS_MPI_AOR_no_duplicates.csv")
+} else if(AOR) {
   print("writing full csv (AOR level)")
   write_csv(arrests_with_denom, "data/processed/glm_trajectory_type_threatlevel_convicted_ACS_MPI_AOR.csv")
+} else if(remove_duplicates){
+  print("writing duplicates removed csv (state level)")
+  write_csv(arrests_with_denom, "data/processed/glm_trajectory_type_threatlevel_convicted_ACS_MPI_no_duplicates.csv")
 } else{
   print("writing full csv (state level)")
   write_csv(arrests_with_denom, "data/processed/glm_trajectory_type_threatlevel_convicted_ACS_MPI.csv")

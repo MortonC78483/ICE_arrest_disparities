@@ -2,7 +2,10 @@
 title: "Fig_conviction"
 author: "Claire Morton"
 date: "2026-06-12"
-output: pdf_document
+output:
+  html_document:
+    df_print: paged
+  pdf_document: default
 ---
 
 
@@ -414,7 +417,7 @@ conv_method_state <- aggregate_data(trajectory, c("conv_method", "region", "stat
                                       TRUE) %>%
   filter(!is.na(conv_method))
 
-arrange_figure2(conv_method, conv_method_state, model_fml, wt_fml, "linear", "", do_sensitivity = T, m_vals = c(.4, .5, 1.1, 1.2, 1.7, 1.8, 2.3, 2.4))
+arrange_figure2(conv_method, conv_method_state, model_fml, wt_fml, "linear", "", do_sensitivity = T, m_vals = c(.4, .5, 1.0, 1.1, 1.7, 1.8, 2.3, 2.4))
 ggsave("../figures/main_text/mpi_denoms_fig2.pdf", height = 5.5, width = 9)
 
 conv_method <- aggregate_data(trajectory, c("conv_method", "region", "window"), 
@@ -461,16 +464,19 @@ return_p_value <- function(data){
   mod <- feols(model_fml, data, weights = wt_fml, cluster = ~state)
   states <- unique(data$state)
   n_states <- length(states)
+  
+  mean_val <- unname(coef(feols(model_fml, data = data, weights = wt_fml, cluster = ~state)))
+  
   jackknife_est_matrix <- t(sapply(states, function(dropped_state) {
     sub_data <- subset(data, state != dropped_state)
     coef(feols(model_fml, data = sub_data, weights = wt_fml, cluster = ~state))
   }))
-  var = sum((jackknife_est_matrix - mean(jackknife_est_matrix))^2)*(n_states-1)/(n_states )
+  var = sum((jackknife_est_matrix - mean_val)^2)*(n_states-1)/(n_states )
   se = sqrt(var)
-  z = mean(jackknife_est_matrix)/se
+  z = mean_val/se
   print(pnorm(-abs(z))*2)
   
-  c(mean(jackknife_est_matrix),  mean(jackknife_est_matrix) - 1.96*se,  mean(jackknife_est_matrix) + 1.96*se)
+  c(mean_val, mean_val - 1.96*se, mean_val + 1.96*se)
 }
 
 print("LEA conv:")
@@ -486,9 +492,10 @@ print("CA nonconv:")
 return_p_value(conv_method_state %>% filter(conv_method == "CA_nonconv"))
 ```
 
-```{r, fig_remove_states, echo = F}
-trajectory <- read_csv("../data/processed/glm_trajectory_type_threatlevel_convicted_ACS_MPI.csv") %>%
-  filter(!(state %in% c("MAINE", "MONTANA", "NORTH DAKOTA", "SOUTH DAKOTA", "VERMONT", "WEST VIRGINIA", "WYOMING")))
+Test with a different base period
+```{r, fig_base_period_change, echo = F}
+trajectory <- read_csv("../data/processed/glm_trajectory_type_threatlevel_convicted_ACS_MPI.csv")  %>%
+  mutate(window = window + 1)
 
 # create four groups
 trajectory <- trajectory %>%
@@ -524,5 +531,92 @@ conv_method_state <- aggregate_data(trajectory, c("conv_method", "region", "stat
 arrange_figure2(conv_method, conv_method_state, model_fml, wt_fml, "linear", "")
 
 arrange_figure2(conv_method, conv_method_state, pois_model_fml, offset_fml, "poisson", "")
+```
 
+Test with duplicates removed
+```{r, fig_no_duplicate, echo = F}
+trajectory <- read_csv("../data/processed/glm_trajectory_type_threatlevel_convicted_ACS_MPI_no_duplicates.csv")
+
+# create four groups
+trajectory <- trajectory %>%
+  mutate(conv_method = ifelse(method == "LEA", 
+                              ifelse(convicted == 1, "LEA_conv", "LEA_nonconv"),
+                              ifelse(method == "CA", 
+                                     ifelse(convicted == 1, "CA_conv", "CA_nonconv"),
+                                     NA)))
+
+
+conv_method <- aggregate_data(trajectory, c("conv_method", "region", "window"), 
+                                      "pop_MPI", 
+                                      TRUE) %>%
+  filter(!is.na(conv_method))
+
+conv_method_state <- aggregate_data(trajectory, c("conv_method", "region", "state", "window"), 
+                                      "pop_MPI", 
+                                      TRUE) %>%
+  filter(!is.na(conv_method))
+
+arrange_figure2(conv_method, conv_method_state, model_fml, wt_fml, "linear", "", do_sensitivity = F)
+
+conv_method <- aggregate_data(trajectory, c("conv_method", "region", "window"), 
+                                      "pop_ACS", 
+                                      TRUE) %>%
+  filter(!is.na(conv_method))
+
+conv_method_state <- aggregate_data(trajectory, c("conv_method", "region", "state", "window"), 
+                                      "pop_ACS", 
+                                      TRUE) %>%
+  filter(!is.na(conv_method))
+
+arrange_figure2(conv_method, conv_method_state, model_fml, wt_fml, "linear", "")
+
+arrange_figure2(conv_method, conv_method_state, pois_model_fml, offset_fml, "poisson", "")
+```
+
+```{r, fig_remove_states, echo = F}
+incomplete_states <- read_csv("../data/raw/mpi_state_region.csv") %>%
+  group_by(state) %>%
+  mutate(state = toupper(state)) %>%
+  mutate(n = n()) %>%
+  filter(n != 6) %>%
+  distinct(state)
+incomplete_states <- c(c("MAINE", "MONTANA", "NORTH DAKOTA", "SOUTH DAKOTA", "VERMONT", "WEST VIRGINIA", "WYOMING"), incomplete_states$state)
+
+trajectory <- read_csv("../data/processed/glm_trajectory_type_threatlevel_convicted_ACS_MPI.csv")  %>%
+  filter(!(state %in% incomplete_states))
+
+# create four groups
+trajectory <- trajectory %>%
+  mutate(conv_method = ifelse(method == "LEA", 
+                              ifelse(convicted == 1, "LEA_conv", "LEA_nonconv"),
+                              ifelse(method == "CA", 
+                                     ifelse(convicted == 1, "CA_conv", "CA_nonconv"),
+                                     NA)))
+
+
+conv_method <- aggregate_data(trajectory, c("conv_method", "region", "window"), 
+                                      "pop_MPI", 
+                                      TRUE) %>%
+  filter(!is.na(conv_method))
+
+conv_method_state <- aggregate_data(trajectory, c("conv_method", "region", "state", "window"), 
+                                      "pop_MPI", 
+                                      TRUE) %>%
+  filter(!is.na(conv_method))
+
+arrange_figure2(conv_method, conv_method_state, model_fml, wt_fml, "linear", "", do_sensitivity = F)
+
+conv_method <- aggregate_data(trajectory, c("conv_method", "region", "window"), 
+                                      "pop_ACS", 
+                                      TRUE) %>%
+  filter(!is.na(conv_method))
+
+conv_method_state <- aggregate_data(trajectory, c("conv_method", "region", "state", "window"), 
+                                      "pop_ACS", 
+                                      TRUE) %>%
+  filter(!is.na(conv_method))
+
+arrange_figure2(conv_method, conv_method_state, model_fml, wt_fml, "linear", "")
+
+arrange_figure2(conv_method, conv_method_state, pois_model_fml, offset_fml, "poisson", "")
 ```

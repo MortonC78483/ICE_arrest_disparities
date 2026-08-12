@@ -3,8 +3,8 @@ title: "triple_diff"
 author: "Claire Morton"
 date: "2026-06-19"
 output:
-  pdf_document: default
   html_document: default
+  pdf_document: default
 ---
 
 ```{r setup, include=FALSE}
@@ -29,7 +29,6 @@ aggregate_data <- function(data,
                            pop_col,
                            agg_noneuca = TRUE){
   
-  
   pop_cols <- c("pop_ACS", "pop_MPI")
   
   data_pop <- data %>% 
@@ -48,7 +47,7 @@ aggregate_data <- function(data,
     data_pop <- data_pop %>% 
       mutate(region = ifelse(region == "EUCA", "EUCA", "nonEUCA")) %>%
       group_by(pick(-c(n_arrests, pop))) %>%
-      summarize(n_arrests = sum(n_arrests),
+      summarize(n_arrests = sum(n_arrests)/n(),
                 pop = sum(pop))
     
     raw_pop <- raw_pop %>% 
@@ -101,6 +100,7 @@ aggregate_data <- function(data,
 
 ```{r, echo = F}
 trajectory <- read_csv("../data/processed/glm_trajectory_type_threatlevel_convicted_ACS_MPI.csv") 
+sum(trajectory$n_arrests)
 
 trajectory <- trajectory %>%
   mutate(conv_method = ifelse(method == "LEA", 
@@ -110,20 +110,24 @@ trajectory <- trajectory %>%
                                      NA)))
 
 trajectory <- trajectory %>%
-  filter(method == "CA")
+  filter(method == "CA") %>%
+  select(state, region, window, conv_method, n_arrests, pop_MPI)
 
-conv_method_state <- aggregate_data(trajectory, c("conv_method", "region", "state", "window"), 
-                                      "pop_MPI", 
-                                      TRUE) %>%
-  filter(!is.na(conv_method)) %>%
+conv_method_state <- trajectory %>%
   filter(window >= -1) %>%
-  mutate(window = ifelse(window < 0, -1, 0)) %>%
-  group_by(region, window, pop, state, conv_method) %>%
-  summarize(n_arrests = sum(n_arrests)) %>%
-  mutate(ratio = n_arrests/pop*1000)
-  
+  mutate(window = ifelse(window >= 0, 0, -1)) %>%
+  group_by(region, state, window, conv_method) %>%
+  summarize(pop_MPI = mean(pop_MPI),
+            n_arrests = mean(n_arrests)) %>%
+  mutate(region = ifelse(region == "EUCA", "EUCA", "nonEUCA")) %>%
+  group_by(region, state, window, conv_method) %>%
+  summarize(pop_MPI = sum(pop_MPI), 
+            n_arrests = sum(n_arrests)) %>%
+  group_by(window, region, state, conv_method, pop_MPI) %>%
+  summarize(n_arrests = sum(n_arrests),
+            ratio = sum(n_arrests)/sum(pop_MPI)*1000) 
 
-wt_fml <- as.formula("~ pop")
+wt_fml <- as.formula("~ pop_MPI")
 model_fml <- as.formula(
   paste0("ratio ~ i(window, region, ref = -1, ref2 = 'EUCA') | region + window")
 )
@@ -132,6 +136,9 @@ return_p_value <- function(data){
   states <- unique(data$state)
   n_states <- length(states)
   
+  coef_nonconv <- coef(feols(model_fml, data %>% filter(conv_method == "CA_nonconv"), weights = wt_fml, cluster = ~state)) 
+  coef_conv <- coef(feols(model_fml, data %>% filter(conv_method == "CA_conv"), weights = wt_fml, cluster = ~state))
+  mean = unname(coef_nonconv - coef_conv)
   jackknife_est_matrix <- t(sapply(states, function(dropped_state) {
     sub_data <- subset(data, state != dropped_state)
     coef_nonconv <- coef(feols(model_fml, sub_data %>% filter(conv_method == "CA_nonconv"), weights = wt_fml, cluster = ~state)) 
@@ -139,19 +146,19 @@ return_p_value <- function(data){
     coef_nonconv - coef_conv
   }))
   
-  var = sum((jackknife_est_matrix - mean(jackknife_est_matrix))^2)*(n_states-1)/(n_states)
+  var = sum((jackknife_est_matrix - mean)^2)*(n_states-1)/(n_states)
   se = sqrt(var)
-  z = mean(jackknife_est_matrix)/se
-  pnorm(-abs(z))*2
-  c(mean(jackknife_est_matrix), mean(jackknife_est_matrix) - 1.96*se, mean(jackknife_est_matrix) + 1.96*se)
+  z = mean/se
+  print(pnorm(-abs(z))*2)
+  print(c(mean, mean - 1.96*se, mean + 1.96*se))
 }
 
 return_p_value(conv_method_state)
 ```
 
-
 ```{r, echo = F}
 trajectory <- read_csv("../data/processed/glm_trajectory_type_threatlevel_convicted_ACS_MPI.csv") 
+sum(trajectory$n_arrests)
 
 trajectory <- trajectory %>%
   mutate(conv_method = ifelse(method == "LEA", 
@@ -161,20 +168,24 @@ trajectory <- trajectory %>%
                                      NA)))
 
 trajectory <- trajectory %>%
-  filter(method == "LEA")
+  filter(method == "LEA") %>%
+  select(state, region, window, conv_method, n_arrests, pop_MPI)
 
-conv_method_state <- aggregate_data(trajectory, c("conv_method", "region", "state", "window"), 
-                                      "pop_MPI", 
-                                      TRUE) %>%
-  filter(!is.na(conv_method)) %>%
+conv_method_state <- trajectory %>%
   filter(window >= -1) %>%
-  mutate(window = ifelse(window < 0, -1, 0)) %>%
-  group_by(region, window, pop, state, conv_method) %>%
-  summarize(n_arrests = sum(n_arrests)) %>%
-  mutate(ratio = n_arrests/pop*1000)
+  mutate(window = ifelse(window >= 0, 0, -1)) %>%
+  group_by(region, state, window, conv_method) %>%
+  summarize(pop_MPI = mean(pop_MPI),
+            n_arrests = mean(n_arrests)) %>%
+  mutate(region = ifelse(region == "EUCA", "EUCA", "nonEUCA")) %>%
+  group_by(region, state, window, conv_method) %>%
+  summarize(pop_MPI = sum(pop_MPI), 
+            n_arrests = sum(n_arrests)) %>%
+  group_by(window, region, state, conv_method, pop_MPI) %>%
+  summarize(n_arrests = sum(n_arrests),
+            ratio = sum(n_arrests)/sum(pop_MPI)*1000) 
   
-
-wt_fml <- as.formula("~ pop")
+wt_fml <- as.formula("~ pop_MPI")
 model_fml <- as.formula(
   paste0("ratio ~ i(window, region, ref = -1, ref2 = 'EUCA') | region + window")
 )
@@ -182,6 +193,10 @@ model_fml <- as.formula(
 return_p_value <- function(data){
   states <- unique(data$state)
   n_states <- length(states)
+  
+  coef_nonconv <- coef(feols(model_fml, data %>% filter(conv_method == "LEA_nonconv"), weights = wt_fml, cluster = ~state)) 
+  coef_conv <- coef(feols(model_fml, data %>% filter(conv_method == "LEA_conv"), weights = wt_fml, cluster = ~state))
+  mean = unname(coef_nonconv - coef_conv)
   
   jackknife_est_matrix <- t(sapply(states, function(dropped_state) {
     sub_data <- subset(data, state != dropped_state)
@@ -190,11 +205,11 @@ return_p_value <- function(data){
     coef_nonconv - coef_conv
   }))
   
-  var = sum((jackknife_est_matrix - mean(jackknife_est_matrix))^2)*(n_states-1)/(n_states)
+  var = sum((jackknife_est_matrix - mean)^2)*(n_states-1)/(n_states)
   se = sqrt(var)
-  z = mean(jackknife_est_matrix)/se
+  z = mean/se
   print(pnorm(-abs(z))*2)
-  c(mean(jackknife_est_matrix), mean(jackknife_est_matrix) - 1.96*se, mean(jackknife_est_matrix) + 1.96*se)
+  print(c(mean, mean - 1.96*se, mean + 1.96*se))
 }
 
 return_p_value(conv_method_state)

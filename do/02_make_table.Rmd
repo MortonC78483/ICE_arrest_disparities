@@ -2,7 +2,9 @@
 title: "make_Table_1"
 author: "Claire Morton"
 date: "2026-06-18"
-output: pdf_document
+output:
+  html_document:
+    df_print: paged
 ---
 
 ```{r setup, include=FALSE}
@@ -24,7 +26,7 @@ n_arrests_post <- trajectory %>%
   summarize(n_arrests_post = sum(n_arrests))
 
 pop_MPI <- trajectory %>%
-  filter(window == 0 & method == "CA" & alt_method == "CA" & convicted == 0 & threat_level == 0) %>%
+  filter(window == 0 & method == "CA" & convicted == 0 & threat_level == 0) %>%
   group_by(region) %>%
   summarize(pop_MPI = sum(pop_MPI))
 
@@ -66,7 +68,7 @@ n_arrests_post <- trajectory %>%
   summarize(n_arrests_post = sum(n_arrests))
 
 pop_ACS <- trajectory %>%
-  filter(window == 0 & method == "CA" & alt_method == "CA" & convicted == 0 & threat_level == 0) %>%
+  filter(window == 0 & method == "CA" & convicted == 0 & threat_level == 0) %>%
   group_by(region) %>%
   summarize(pop_ACS = sum(pop_ACS))
 

@@ -3,8 +3,8 @@ title: "Paper_Numbers"
 author: "Claire Morton"
 date: "2026-06-19"
 output:
-  pdf_document: default
   html_document: default
+  pdf_document: default
 ---
 
 ```{r setup, include=FALSE}
@@ -148,11 +148,11 @@ raw_arrests[!(raw_arrests$state_clean %in% STATES),]$state_clean = ""
 
 raw_arrests <- raw_arrests |> 
   mutate(state_clean = case_when(
-    aor_short == "Phoenix" ~ "ARIZONA",
-    aor_short %in% c("Buffalo", "New York City") ~ "NEW YORK",
-    aor_short %in% c("San Diego", "Los Angeles") ~ "CALIFORNIA",
-    aor_short %in% c("Houston", "Harlingen", "San Antonio", "Dallas") ~ "TEXAS",
-    aor_short == "Miami" ~ "FLORIDA",
+    state_clean == "" & aor_short == "Phoenix" ~ "ARIZONA",
+    state_clean == "" &aor_short %in% c("Buffalo", "New York City") ~ "NEW YORK",
+    state_clean == "" &aor_short %in% c("San Diego", "Los Angeles") ~ "CALIFORNIA",
+    state_clean == "" &aor_short %in% c("Houston", "Harlingen", "San Antonio", "Dallas") ~ "TEXAS",
+    state_clean == "" &aor_short == "Miami" ~ "FLORIDA",
     TRUE ~ state_clean 
   ))
 

@@ -4,6 +4,12 @@ library(tidyr)
 library(arrow)
 library(dplyr)
 
+# create duplicate ID dataframe
+raw_arrests <- read_parquet("data/raw/arrests-latest.parquet") %>%
+  select(unique_identifier, duplicate_likely) %>%
+  filter(duplicate_likely == T)
+write_csv(raw_arrests, "data/processed/duplicates.csv")
+
 # load raw arrests data to get the other variables
 raw_arrests <- read_parquet("data/raw/arrests-latest.parquet") %>%
  filter((as.Date(apprehension_date) >= as.Date("2022-10-01")) &
@@ -13,7 +19,7 @@ raw_arrests <- read_parquet("data/raw/arrests-latest.parquet") %>%
          "ApprehensionMethod" = "apprehension_method",
          "ApprehensionCriminality" = "apprehension_criminality"
          ) %>%
-  select("ApprehensionDate","ApprehensionAOR",
+  select("unique_identifier", "ApprehensionDate","ApprehensionAOR",
          "ApprehensionMethod","ApprehensionCriminality","apprehension_state",
          "citizenship_country", "gender", "birth_year", "case_threat_level")
          
@@ -30,11 +36,11 @@ raw_arrests[!(raw_arrests$state_clean %in% STATES),]$state_clean = ""
 
 raw_arrests <- raw_arrests |> 
   mutate(state_clean = case_when(
-    aor_short == "Phoenix" ~ "ARIZONA",
-    aor_short %in% c("Buffalo", "New York City") ~ "NEW YORK",
-    aor_short %in% c("San Diego", "Los Angeles") ~ "CALIFORNIA",
-    aor_short %in% c("Houston", "Harlingen", "San Antonio", "Dallas") ~ "TEXAS",
-    aor_short == "Miami" ~ "FLORIDA",
+    state_clean == "" & aor_short == "Phoenix" ~ "ARIZONA",
+    state_clean == "" & aor_short %in% c("Buffalo", "New York City") ~ "NEW YORK",
+    state_clean == "" & aor_short %in% c("San Diego", "Los Angeles") ~ "CALIFORNIA",
+    state_clean == "" & aor_short %in% c("Houston", "Harlingen", "San Antonio", "Dallas") ~ "TEXAS",
+    state_clean == "" & aor_short == "Miami" ~ "FLORIDA",
     TRUE ~ state_clean 
   ))
 

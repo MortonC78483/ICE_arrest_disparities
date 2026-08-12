@@ -3,8 +3,8 @@ title: "Fig_rates"
 author: "Claire Morton"
 date: "2026-06-10"
 output:
-  pdf_document: default
   html_document: default
+  pdf_document: default
 ---
 
 ```{r setup, include=FALSE}
@@ -211,36 +211,26 @@ event_study_plot <- function(estimates,
     scale_color_manual(values = pal)
 }
 
-
-plot_predictions <- function(data, model_fml, extra_fml, pal, baseline, type = c("linear", "poisson")) {
+plot_predictions <- function(data, pal, baseline, type = c("linear", "poisson")) {
   type <- match.arg(type)
-  
-  if (type == "poisson"){
-    mod <- fepois(model_fml, data = data)
-  } else{
-    mod  <- feols(model_fml, data = data)
-  }
-  data$pred <- predict(mod, newdata = data, type = "response")
   
   if (type == "poisson") {
     baseline_windows <- data %>%
       filter(window == -1) %>%
-      ungroup() %>%
-      select(region, n_arrests) %>%
-      rename(baseline_n_arrests = n_arrests)
+      select(region, baseline_n_arrests = n_arrests)
     
     data <- data %>% 
       inner_join(baseline_windows, by = "region") %>% 
       mutate(
-        plot_y    = n_arrests / baseline_n_arrests,
-        plot_pred = pred / baseline_n_arrests
+        plot_y = n_arrests / baseline_n_arrests,
+        plot_pred = plot_y
       )
     y_lab <- "Arrests per 1k (Relative to Window -1)"
   } else {
     data <- data %>% 
       mutate(
         plot_y = ratio,
-        plot_pred = pred
+        plot_pred = ratio
       )
     y_lab <- "Arrests per 1k"
   }
@@ -299,9 +289,13 @@ arrange_fig1 <- function(data_allregion, data_state_allregion, data_nonEUCA, dat
   
   type <- match.arg(type)
   
-  plt.part_a <- plot_predictions(data = data_allregion, model_fml = model_fml, pal = pal, baseline = ifelse(type == "poisson", 1, 0), type = type)
+  plt.part_a <- plot_predictions(data = data_allregion, 
+                                 #model_fml = model_fml, 
+                                 pal = pal, baseline = ifelse(type == "poisson", 1, 0), type = type)
   plt.part_b <- event_study_plot(fit_diffindiff(data_state_allregion, model_fml, extra_fml, type, do_se = do_se, do_sensitivity = F), pal = pal, baseline = ifelse(type == "poisson", 1, 0))
-  plt.part_c <- plot_predictions(data = data_nonEUCA, model_fml = model_fml, pal = pal_euca, baseline = ifelse(type == "poisson", 1, 0), type = type)
+  plt.part_c <- plot_predictions(data = data_nonEUCA, 
+                                 #model_fml = model_fml, 
+                                 pal = pal_euca, baseline = ifelse(type == "poisson", 1, 0), type = type)
   plt.part_d <- event_study_plot(fit_diffindiff(data_state_nonEUCA, model_fml, extra_fml, type, do_se = do_se, do_sensitivity = do_sensitivity), pal = pal_euca, baseline = ifelse(type == "poisson", 1, 0))
 
   ylim_ac <- range(c(layer_scales(plt.part_a)$y$range$range, layer_scales(plt.part_c)$y$range$range), na.rm = TRUE)
@@ -460,21 +454,21 @@ mod <- feols(model_fml, data_state_nonEUCA, weights = wt_fml, cluster = ~state)
 states <- unique(data_state_nonEUCA$state)
 n_states <- length(states)
 
-windows <- c(0)
+mean_val <- unname(coef(feols(model_fml, data = data_state_nonEUCA, weights = wt_fml, cluster = ~state)))
 
 jackknife_est_matrix <- t(sapply(states, function(dropped_state) {
   sub_data <- subset(data_state_nonEUCA, state != dropped_state)
   coef(feols(model_fml, data = sub_data, weights = wt_fml, cluster = ~state))
 }))
 
-var = sum((jackknife_est_matrix - mean(jackknife_est_matrix))^2)*(n_states-1)/(n_states )
+var = sum((jackknife_est_matrix - mean_val)^2)*(n_states-1)/(n_states )
 se = sqrt(var)
-z = mean(jackknife_est_matrix)/se
+z = mean_val/se
 pnorm(-abs(z))*2
 
-mean(jackknife_est_matrix)
-mean(jackknife_est_matrix)-1.96*se
-mean(jackknife_est_matrix)+1.96*se
+mean_val
+mean_val-1.96*se
+mean_val+1.96*se
 ```
 
 Test for significance
@@ -500,26 +494,26 @@ data_state_nonEUCA %>%
             pop = sum(pop),
             prop = sum(n_arrests)/sum(pop)*1000)
 
-mod <- feols(pois_model_fml, data_state_nonEUCA, weights = offset_fml, cluster = ~state)
+mod <- fepois(pois_model_fml, data_state_nonEUCA, offset = offset_fml, cluster = ~state)
 
 states <- unique(data_state_nonEUCA$state)
 n_states <- length(states)
 
-windows <- c(0)
+mean_val <- unname(coef(fepois(pois_model_fml, data = data_state_nonEUCA, offset = offset_fml, cluster = ~state)))
 
 jackknife_est_matrix <- t(sapply(states, function(dropped_state) {
   sub_data <- subset(data_state_nonEUCA, state != dropped_state)
-  coef(fepois(pois_model_fml, data = sub_data, weights = offset_fml, cluster = ~state))
+  coef(fepois(pois_model_fml, data = sub_data, offset = offset_fml, cluster = ~state))
 }))
 
-var = sum((jackknife_est_matrix - mean(jackknife_est_matrix))^2)*(n_states-1)/(n_states )
+var = sum((jackknife_est_matrix - mean_val)^2)*(n_states-1)/(n_states )
 se = sqrt(var)
-z = mean(jackknife_est_matrix)/se
+z = mean_val/se
 pnorm(-abs(z))*2
 
-exp(mean(jackknife_est_matrix))
-exp(mean(jackknife_est_matrix)-1.96*se)
-exp(mean(jackknife_est_matrix)+1.96*se)
+exp(mean_val)
+exp(mean_val-1.96*se)
+exp(mean_val+1.96*se)
 ```
 
 ```{r, CA_figs, echo = F}
@@ -577,11 +571,19 @@ ggsave("../figures/supplement/lea_multiplicative_fig1.pdf", height = 4.5, width 
 ```
 
 ```{r, takeout_states, echo = F}
+incomplete_states <- read_csv("../data/raw/mpi_state_region.csv") %>%
+  group_by(state) %>%
+  mutate(state = toupper(state)) %>%
+  mutate(n = n()) %>%
+  filter(n != 6) %>%
+  distinct(state)
+incomplete_states <- c(c("MAINE", "MONTANA", "NORTH DAKOTA", "SOUTH DAKOTA", "VERMONT", "WEST VIRGINIA", "WYOMING"), incomplete_states$state)
+
 trajectory <- read_csv("../data/processed/glm_trajectory_type_threatlevel_convicted_ACS_MPI.csv") %>%
   mutate(region = ifelse(region == "AFRICA", "Africa",
                          ifelse(region == "ASIA", "Asia",
                                 ifelse(region == "CARIBBEAN", "Caribbean", region)))) %>%
-  filter(!(state %in% c("MAINE", "MONTANA", "NORTH DAKOTA", "SOUTH DAKOTA", "VERMONT", "WEST VIRGINIA", "WYOMING")))
+  filter(!(state %in% incomplete_states))
 
 data_state_allregion <- aggregate_data(trajectory, c("region", "window", "state"), "pop_MPI", agg_noneuca = FALSE)
 data_state_nonEUCA <- aggregate_data(trajectory, c("region", "window", "state"), "pop_MPI", agg_noneuca = TRUE)
@@ -600,5 +602,33 @@ arrange_fig1(data_allregion, data_state_allregion, data_nonEUCA, data_state_nonE
 arrange_fig1(data_allregion, data_state_allregion, data_nonEUCA, data_state_nonEUCA, "poisson", pois_model_fml, offset_fml, "")
 ```
 
+Test relative to period -2
+```{r}
+trajectory <- read_csv("../data/processed/glm_trajectory_type_threatlevel_convicted_ACS_MPI.csv") %>%
+  mutate(region = ifelse(region == "AFRICA", "Africa",
+                         ifelse(region == "ASIA", "Asia",
+                                ifelse(region == "CARIBBEAN", "Caribbean", region)))) %>%
+  mutate(window = window + 1)
 
+data_state_allregion <- aggregate_data(trajectory, c("region", "window", "state"), "pop_MPI", agg_noneuca = FALSE)
+data_state_nonEUCA <- aggregate_data(trajectory, c("region", "window", "state"), "pop_MPI", agg_noneuca = TRUE)
+data_allregion <- aggregate_data(trajectory, c("region", "window"), "pop_MPI", agg_noneuca = FALSE)
+data_nonEUCA <- aggregate_data(trajectory, c("region", "window"), "pop_MPI", agg_noneuca = TRUE)
 
+arrange_fig1(data_allregion, data_state_allregion, data_nonEUCA, data_state_nonEUCA, "linear", model_fml, wt_fml, "", do_sensitivity = F)
+```
+
+Test with duplicates removed
+```{r}
+trajectory <- read_csv("../data/processed/glm_trajectory_type_threatlevel_convicted_ACS_MPI_no_duplicates.csv") %>%
+  mutate(region = ifelse(region == "AFRICA", "Africa",
+                         ifelse(region == "ASIA", "Asia",
+                                ifelse(region == "CARIBBEAN", "Caribbean", region))))
+
+data_state_allregion <- aggregate_data(trajectory, c("region", "window", "state"), "pop_MPI", agg_noneuca = FALSE)
+data_state_nonEUCA <- aggregate_data(trajectory, c("region", "window", "state"), "pop_MPI", agg_noneuca = TRUE)
+data_allregion <- aggregate_data(trajectory, c("region", "window"), "pop_MPI", agg_noneuca = FALSE)
+data_nonEUCA <- aggregate_data(trajectory, c("region", "window"), "pop_MPI", agg_noneuca = TRUE)
+
+arrange_fig1(data_allregion, data_state_allregion, data_nonEUCA, data_state_nonEUCA, "linear", model_fml, wt_fml, "", do_sensitivity = F)
+```
