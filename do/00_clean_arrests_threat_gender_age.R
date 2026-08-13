@@ -3,6 +3,7 @@ library(tigris)
 library(tidyr)
 library(arrow)
 library(dplyr)
+library(readr)
 
 # create duplicate ID dataframe
 raw_arrests <- read_parquet("data/raw/arrests-latest.parquet") %>%

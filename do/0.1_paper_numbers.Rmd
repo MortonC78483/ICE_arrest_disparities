@@ -168,7 +168,6 @@ raw_arrests <- raw_arrests |>
     aor_short == "" & state_clean %in% c("NEW MEXICO") ~ "El Paso",
     aor_short == "" & state_clean %in% c("OKLAHOMA") ~ "Dallas",
     aor_short == "" & state_clean %in% c("WYOMING", "COLORADO") ~ "Denver",
-    aor_short == "" & state_clean %in% c("UTAH", "NEVADA", "IDAHO", "MONTANA") ~ "Salt Lake City",
     aor_short == "" & state_clean %in% c("MINNESOTA", "IOWA", "NEBRASKA", "SOUTH DAKOTA", "NORTH DAKOTA") ~ "St. Paul",
     aor_short == "" & state_clean %in% c("WISCONSIN", "ILLINOIS", "INDIANA", "KENTUCKY", "MISSOURI", "KANSAS") ~ "Chicago",
     aor_short == "" & state_clean %in% c("ARKANSAS", "LOUISIANA", "TENNESSEE", "MISSISSIPPI", "ALABAMA") ~ "New Orleans",
