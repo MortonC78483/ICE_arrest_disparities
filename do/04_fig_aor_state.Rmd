@@ -1,0 +1,1296 @@
+---
+title: "Fig_boxplot"
+author: "Claire Morton"
+date: "2026-06-19"
+output:
+  pdf_document: default
+  html_document: default
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(haven)
+library(lubridate)
+library(readr)
+library(dplyr)
+library(tidyr)
+library(ggplot2)
+library(ggrepel)
+library(scales)
+library(patchwork)
+```
+
+```{r, echo = FALSE}
+aggregate_data_aor <- function(data, 
+                           cols_to_keep, 
+                           pop_col,
+                           agg_noneuca = TRUE){
+  
+  
+  pop_cols <- c("pop_ACS", "pop_MPI")
+  
+  data_pop <- data %>% 
+    select(-setdiff(pop_cols, pop_col)) %>%
+    rename("pop" = !!sym(pop_col))
+  
+  raw_pop <- data_pop %>%
+    group_by(aor, region) %>%
+    summarize(pop = first(pop), .groups = "drop")
+  
+  # find geographic keys
+  geo_keys <- intersect(cols_to_keep, c("aor", "region"))
+  
+  # aggregate regions if reuqested
+  if(agg_noneuca){
+    data_pop <- data_pop %>% 
+      mutate(region = ifelse(region == "EUCA", "EUCA", "nonEUCA")) %>%
+      group_by(pick(-c(n_arrests, pop))) %>%
+      summarize(n_arrests = sum(n_arrests),
+                pop = sum(pop))
+    
+    raw_pop <- raw_pop %>% 
+      mutate(region = ifelse(region == "EUCA", "EUCA", "nonEUCA")) %>%
+      group_by(aor, region) %>%
+      summarize(pop = sum(pop), .groups = "drop")
+  }
+ 
+  # population map
+  pop_map <- data_pop %>%
+    group_by(aor, region, pop) %>%
+    slice_head(n = 1) %>%
+    ungroup() %>%
+    group_by_at(geo_keys) %>%
+    summarize(pop = sum(pop), .groups = "drop")
+  
+  # checksum value
+  checksum <- data_pop %>%
+    group_by(aor, region, pop) %>%
+    slice_head(n=1) %>%
+    ungroup() %>%
+    group_by(region) %>%
+    summarize(pop_checksum = sum(pop), .groups = "drop")
+  
+  # aggregate arrests, join population back in
+  data_pop <- data_pop %>%
+    group_by_at(cols_to_keep) %>%
+    summarize(n_arrests = sum(n_arrests, na.rm = TRUE), .groups = "drop") %>%
+    left_join(pop_map, by = geo_keys) %>%
+    mutate(ratio = n_arrests/pop*1000,
+           log_pop = log(pop))
+  
+  # checksum
+  total_aggregated <- data_pop %>%
+    group_by_at(geo_keys) %>%
+    summarize(pop = first(pop), .groups = "drop") %>%
+    pull(pop) %>%
+    sum(na.rm = TRUE)
+  total_checksum <- sum(checksum$pop_checksum, na.rm = TRUE)
+  if (!(dplyr::near(total_checksum, total_aggregated))) {
+    warning("Checksum Failed!")
+  }
+  
+  return(data_pop)
+}
+
+aggregate_data_state <- function(data, 
+                           cols_to_keep, 
+                           pop_col,
+                           agg_noneuca = TRUE){
+  
+  
+  pop_cols <- c("pop_ACS", "pop_MPI")
+  
+  data_pop <- data %>% 
+    select(-setdiff(pop_cols, pop_col)) %>%
+    rename("pop" = !!sym(pop_col))
+  
+  raw_pop <- data_pop %>%
+    group_by(state, region) %>%
+    summarize(pop = first(pop), .groups = "drop")
+  
+  # aggregate regions if reuqested
+  if(agg_noneuca){
+    data_pop <- data_pop %>% 
+      mutate(region = ifelse(region == "EUCA", "EUCA", "nonEUCA"))
+    
+    raw_pop <- raw_pop %>% 
+      mutate(region = ifelse(region == "EUCA", "EUCA", "nonEUCA")) %>%
+      group_by(state, region) %>%
+      summarize(pop = sum(pop), .groups = "drop")
+  }
+  
+  # checksum value
+  checksum <- data_pop %>%
+    group_by(state, region, pop) %>%
+    slice_head(n=1) %>%
+    ungroup() %>%
+    group_by(region) %>%
+    summarize(pop_checksum = sum(pop), .groups = "drop")
+  
+  # find geographic keys
+  geo_keys <- intersect(cols_to_keep, c("state", "region"))
+  
+  # population map
+  pop_map <- data_pop %>%
+    group_by(state, region, pop) %>%
+    slice_head(n = 1) %>%
+    ungroup() %>%
+    group_by_at(geo_keys) %>%
+    summarize(pop = sum(pop), .groups = "drop")
+  
+  # aggregate arrests, join population back in
+  data_pop <- data_pop %>%
+    group_by_at(cols_to_keep) %>%
+    summarize(n_arrests = sum(n_arrests, na.rm = TRUE), .groups = "drop") %>%
+    left_join(pop_map, by = geo_keys) %>%
+    mutate(ratio = n_arrests/pop*1000,
+           log_pop = log(pop))
+  
+  # checksum
+  total_aggregated <- data_pop %>%
+    group_by_at(geo_keys) %>%
+    summarize(pop = first(pop), .groups = "drop") %>%
+    pull(pop) %>%
+    sum(na.rm = TRUE)
+  total_checksum <- sum(checksum$pop_checksum, na.rm = TRUE)
+  if (!(dplyr::near(total_checksum, total_aggregated))) {
+    warning("Checksum Failed!")
+  }
+  
+  return(data_pop)
+}
+```
+
+Main text
+```{r, echo = FALSE}
+trajectory <- read_csv("../data/processed/glm_trajectory_type_threatlevel_convicted_ACS_MPI_AOR.csv")
+
+n_days_pre <- abs(min(trajectory$window)) * 60
+n_days_post <- (max(trajectory$window) + 1) * 60 + 1
+
+conv_method_aor <- aggregate_data_aor(trajectory, c("region", "aor", "window"), "pop_MPI", TRUE) %>%
+  mutate(window = ifelse(window < 0, -1, 0)) %>%
+  group_by(window, region, aor, pop) %>%
+  summarize(n_arrests = sum(n_arrests)) %>%
+  mutate(ratio = n_arrests/pop *1000,
+         ratio_annualized = n_arrests/pop*1000*ifelse(window == -1, 365.25/n_days_pre, 365.25/n_days_post))
+
+aors_above_threshold_euca <- (conv_method_aor %>%
+  filter(region == "EUCA" & window == "-1" & pop > 10000)) %>%
+  ungroup() %>%
+  select(aor, pop)
+
+aors_above_threshold_noneuca <- (conv_method_aor %>%
+  filter(region == "nonEUCA" & window == "-1" & aor %in% aors_above_threshold_euca$aor)) %>%
+  ungroup() %>%
+  select(aor, pop)
+
+conv_method_aor_euca <- conv_method_aor %>%
+  filter(region == "EUCA" & aor %in% aors_above_threshold_euca$aor) %>%
+  pivot_wider(id_cols = aor, names_from = window, values_from = ratio_annualized) %>%
+  mutate(diff = `0`-`-1`) %>%
+  mutate(region = "EUCA") %>%
+  merge(aors_above_threshold_euca)
+
+conv_method_aor_noneuca <- conv_method_aor %>%
+  filter(region == "nonEUCA" & aor %in% aors_above_threshold_noneuca$aor) %>%
+  pivot_wider(id_cols = aor, names_from = window, values_from = ratio_annualized) %>%
+  mutate(diff = `0`-`-1`) %>%
+  mutate(region = "Non-EUCA") %>%
+  merge(aors_above_threshold_noneuca)
+
+conv_method_aor <- rbind(conv_method_aor_euca, conv_method_aor_noneuca)
+print(paste0("AORs over threshold: ", length(unique(conv_method_aor$aor))))
+
+gaps_widen <- conv_method_aor_euca %>%
+  select(aor, diff) %>%
+  rename("diff_euca" = "diff") %>%
+  merge(conv_method_aor_noneuca %>% select(aor, diff)) %>%
+  mutate(diff = diff-diff_euca)
+
+
+trajectory <- read_csv("../data/processed/glm_trajectory_type_threatlevel_convicted_ACS_MPI.csv")
+conv_method_state <- aggregate_data_state(trajectory, c("region", "state", "window"), "pop_MPI", TRUE) %>%
+  mutate(window = ifelse(window < 0, -1, 0)) %>%
+  group_by(window, region, state, pop) %>%
+  summarize(n_arrests = sum(n_arrests)) %>%
+  mutate(ratio = n_arrests/pop *1000,
+         ratio_annualized = n_arrests/pop*1000*ifelse(window == -1, 365.25/n_days_pre, 365.25/n_days_post))
+
+states_above_threshold_euca <- (conv_method_state %>%
+  filter(region == "EUCA" & window == "-1" & pop > 10000)) %>%
+  ungroup() %>%
+  select(state, pop)
+
+states_above_threshold_noneuca <- (conv_method_state %>%
+  filter(region == "nonEUCA" & window == "-1" & state %in% states_above_threshold_euca$state)) %>%
+  ungroup() %>%
+  select(state, pop)
+
+conv_method_state_euca <- conv_method_state %>%
+  filter(region == "EUCA" & state %in% states_above_threshold_euca$state) %>%
+  pivot_wider(id_cols = state, names_from = window, values_from = ratio_annualized) %>%
+  mutate(diff = `0`-`-1`) %>%
+  mutate(region = "EUCA") %>%
+  merge(states_above_threshold_euca)
+
+conv_method_state_noneuca <- conv_method_state %>%
+  filter(region == "nonEUCA" & state %in% states_above_threshold_noneuca$state) %>%
+  pivot_wider(id_cols = state, names_from = window, values_from = ratio_annualized) %>%
+  mutate(diff = `0`-`-1`) %>%
+  mutate(region = "Non-EUCA") %>%
+  merge(states_above_threshold_noneuca)
+
+conv_method_state <- rbind(conv_method_state_euca, conv_method_state_noneuca)
+print(paste0("States over threshold: ", length(unique(conv_method_state$state))))
+
+gaps_widen <- conv_method_state_euca %>%
+  select(state, diff) %>%
+  rename("diff_euca" = "diff") %>%
+  merge(conv_method_state_noneuca %>% select(state, diff)) %>%
+  mutate(diff = diff-diff_euca)
+```
+
+```{r, echo = FALSE}
+jpos <- position_jitter(width = 0.12, height = 0, seed = 78483)
+
+conv_method_by_region_state <- conv_method_state %>% 
+  pivot_wider(id_cols = state, names_from = region, values_from = c(diff, pop)) %>% 
+  mutate(pop = pop_EUCA+`pop_Non-EUCA`)
+
+pop_vals <- na.omit(conv_method_by_region_state$pop)
+pop_breaks <- as.numeric(quantile(pop_vals, probs = c(0, 0.25, 0.5, 0.75, 1)))
+pop_labels <- paste0(
+  c("Min", "Q1", "Median", "Q3", "Max"), 
+  " (", comma(pop_breaks), ")"
+)
+
+mpi_add_state <- ggplot(conv_method_by_region_state, aes(x = diff_EUCA, y = `diff_Non-EUCA`)) +
+  geom_abline(intercept = 0, slope = 1, linetype = "dashed", color = "grey50", linewidth = 0.6) +
+  geom_point(
+    aes(size = pop), 
+    fill = "#0072B2", 
+    color = "#003049", 
+    alpha = 0.85, 
+    shape = 21, 
+    stroke = 0.5
+  ) +
+  # geom_text_repel(
+  #   data = subset(conv_method_by_region_state, `diff_Non-EUCA` > 40),
+  #   aes(label = state),
+  #   size = 3.5,
+  #   box.padding = 0.4,
+  #   point.padding = 0.3,
+  #   min.segment.length = 0
+  # )+
+  scale_size_area(
+    name = "Total Unauthorized\nPopulation Size",
+    breaks = pop_breaks,
+    labels = pop_labels,
+    max_size = 9,
+    guide = guide_legend(
+      override.aes = list(
+        fill = "grey75",    
+        color = "grey30",
+        alpha = 1
+      )
+    )
+  ) +
+  theme_minimal(base_size = 12) +
+  labs(
+    x = "EUCA Change in Arrests per 1k",
+    y = "Non-EUCA Change in Arrests per 1k",
+  ) +
+  theme(
+    legend.position = "right",
+    legend.title = element_text(face = "bold"),
+    panel.grid.minor = element_blank()
+  ) +
+  xlim(min(c(conv_method_by_region_state$diff_EUCA, conv_method_by_region_state$`diff_Non-EUCA`)), max(c(conv_method_by_region_state$diff_EUCA, conv_method_by_region_state$`diff_Non-EUCA`))) +
+  ylim(min(c(conv_method_by_region_state$diff_EUCA, conv_method_by_region_state$`diff_Non-EUCA`)), max(c(conv_method_by_region_state$diff_EUCA, conv_method_by_region_state$`diff_Non-EUCA`)))
+
+
+
+conv_method_by_region_aor <- conv_method_aor %>% 
+  pivot_wider(id_cols = aor, names_from = region, values_from = c(diff, pop)) %>% 
+  mutate(pop = pop_EUCA+`pop_Non-EUCA`)
+
+pop_vals <- na.omit(conv_method_by_region_aor$pop)
+pop_breaks <- as.numeric(quantile(pop_vals, probs = c(0, 0.25, 0.5, 0.75, 1)))
+pop_labels <- paste0(
+  c("Min", "Q1", "Median", "Q3", "Max"), 
+  " (", comma(pop_breaks), ")"
+)
+
+mpi_add_aor <- ggplot(conv_method_by_region_aor, aes(x = diff_EUCA, y = `diff_Non-EUCA`)) +
+  geom_abline(intercept = 0, slope = 1, linetype = "dashed", color = "grey50", linewidth = 0.6) +
+  geom_point(
+    aes(size = pop), 
+    fill = "#0072B2", 
+    color = "#003049", 
+    alpha = 0.85, 
+    shape = 21, 
+    stroke = 0.5
+  ) +
+  scale_size_area(
+    name = "Total Unauthorized\nPopulation Size",
+    breaks = pop_breaks,
+    labels = pop_labels,
+    max_size = 9,
+    guide = guide_legend(
+      override.aes = list(
+        fill = "grey75",    
+        color = "grey30",
+        alpha = 1
+      )
+    )
+  ) +
+  theme_minimal(base_size = 12) +
+  labs(
+    x = "EUCA Change in Arrests per 1k",
+    y = "Non-EUCA Change in Arrests per 1k",
+  ) +
+  theme(
+    legend.position = "right",
+    legend.title = element_text(face = "bold"),
+    panel.grid.minor = element_blank()
+  ) +
+  xlim(min(c(conv_method_by_region_aor$diff_EUCA, conv_method_by_region_aor$`diff_Non-EUCA`)), max(c(conv_method_by_region_aor$diff_EUCA, conv_method_by_region_aor$`diff_Non-EUCA`))) +
+  ylim(min(c(conv_method_by_region_aor$diff_EUCA, conv_method_by_region_aor$`diff_Non-EUCA`)), max(c(conv_method_by_region_aor$diff_EUCA, conv_method_by_region_aor$`diff_Non-EUCA`)))
+```
+
+Fetch IQRs
+```{r, echo = FALSE}
+print("AOR")
+quantile(conv_method_aor[conv_method_aor$region == "EUCA",]$diff , probs = c(.25, .75))
+quantile(conv_method_aor[conv_method_aor$region == "Non-EUCA",]$diff , probs = c(.25, .75))
+
+print("State")
+quantile(conv_method_state[conv_method_state$region == "EUCA",]$diff , probs = c(.25, .75))
+quantile(conv_method_state[conv_method_state$region == "Non-EUCA",]$diff , probs = c(.25, .75))
+```
+
+
+ACS denominators
+```{r, acs_analysis}
+trajectory <- read_csv("../data/processed/glm_trajectory_type_threatlevel_convicted_ACS_MPI_AOR.csv")
+
+n_days_pre <- abs(min(trajectory$window)) * 60
+n_days_post <- (max(trajectory$window) + 1) * 60 + 1
+
+conv_method_aor <- aggregate_data_aor(trajectory, c("region", "aor", "window"), "pop_ACS", TRUE) %>%
+  mutate(window = ifelse(window < 0, -1, 0)) %>%
+  group_by(window, region, aor, pop) %>%
+  summarize(n_arrests = sum(n_arrests)) %>%
+  mutate(ratio = n_arrests/pop *1000,
+         ratio_annualized = n_arrests/pop*1000*ifelse(window == -1, 365.25/n_days_pre, 365.25/n_days_post))
+
+aors_above_threshold_euca <- (conv_method_aor %>%
+  filter(region == "EUCA" & window == "-1" & pop > 10000)) %>%
+  ungroup() %>%
+  select(aor, pop)
+
+aors_above_threshold_noneuca <- (conv_method_aor %>%
+  filter(region == "nonEUCA" & window == "-1" & aor %in% aors_above_threshold_euca$aor)) %>%
+  ungroup() %>%
+  select(aor, pop)
+
+conv_method_aor_euca <- conv_method_aor %>%
+  filter(region == "EUCA" & aor %in% aors_above_threshold_euca$aor) %>%
+  pivot_wider(id_cols = aor, names_from = window, values_from = ratio_annualized) %>%
+  mutate(diff = `0`-`-1`) %>%
+  mutate(region = "EUCA") %>%
+  merge(aors_above_threshold_euca)
+
+conv_method_aor_noneuca <- conv_method_aor %>%
+  filter(region == "nonEUCA" & aor %in% aors_above_threshold_noneuca$aor) %>%
+  pivot_wider(id_cols = aor, names_from = window, values_from = ratio_annualized) %>%
+  mutate(diff = `0`-`-1`) %>%
+  mutate(region = "Non-EUCA") %>%
+  merge(aors_above_threshold_noneuca)
+
+conv_method_aor <- rbind(conv_method_aor_euca, conv_method_aor_noneuca)
+print(paste0("AORs over threshold: ", length(unique(conv_method_aor$aor))))
+
+gaps_widen <- conv_method_aor_euca %>%
+  select(aor, diff) %>%
+  rename("diff_euca" = "diff") %>%
+  merge(conv_method_aor_noneuca %>% select(aor, diff)) %>%
+  mutate(diff = diff-diff_euca)
+
+
+trajectory <- read_csv("../data/processed/glm_trajectory_type_threatlevel_convicted_ACS_MPI.csv")
+conv_method_state <- aggregate_data_state(trajectory, c("region", "state", "window"), "pop_ACS", TRUE) %>%
+  mutate(window = ifelse(window < 0, -1, 0)) %>%
+  group_by(window, region, state, pop) %>%
+  summarize(n_arrests = sum(n_arrests)) %>%
+  mutate(ratio = n_arrests/pop *1000,
+         ratio_annualized = n_arrests/pop*1000*ifelse(window == -1, 365.25/n_days_pre, 365.25/n_days_post))
+
+states_above_threshold_euca <- (conv_method_state %>%
+  filter(region == "EUCA" & window == "-1" & pop > 10000)) %>%
+  ungroup() %>%
+  select(state, pop)
+
+states_above_threshold_noneuca <- (conv_method_state %>%
+  filter(region == "nonEUCA" & window == "-1" & state %in% states_above_threshold_euca$state)) %>%
+  ungroup() %>%
+  select(state, pop)
+
+conv_method_state_euca <- conv_method_state %>%
+  filter(region == "EUCA" & state %in% states_above_threshold_euca$state) %>%
+  pivot_wider(id_cols = state, names_from = window, values_from = ratio_annualized) %>%
+  mutate(diff = `0`-`-1`) %>%
+  mutate(region = "EUCA") %>%
+  merge(states_above_threshold_euca)
+
+conv_method_state_noneuca <- conv_method_state %>%
+  filter(region == "nonEUCA" & state %in% states_above_threshold_noneuca$state) %>%
+  pivot_wider(id_cols = state, names_from = window, values_from = ratio_annualized) %>%
+  mutate(diff = `0`-`-1`) %>%
+  mutate(region = "Non-EUCA") %>%
+  merge(states_above_threshold_noneuca)
+
+conv_method_state <- rbind(conv_method_state_euca, conv_method_state_noneuca)
+print(paste0("States over threshold: ", length(unique(conv_method_state$state))))
+
+gaps_widen <- conv_method_state_euca %>%
+  select(state, diff) %>%
+  rename("diff_euca" = "diff") %>%
+  merge(conv_method_state_noneuca %>% select(state, diff)) %>%
+  mutate(diff = diff-diff_euca)
+```
+
+```{r, echo = FALSE}
+jpos <- position_jitter(width = 0.12, height = 0, seed = 78483)
+
+conv_method_by_region_state <- conv_method_state %>% 
+  pivot_wider(id_cols = state, names_from = region, values_from = c(diff, pop)) %>% 
+  mutate(pop = pop_EUCA+`pop_Non-EUCA`)
+
+pop_vals <- na.omit(conv_method_by_region_state$pop)
+pop_breaks <- as.numeric(quantile(pop_vals, probs = c(0, 0.25, 0.5, 0.75, 1)))
+pop_labels <- paste0(
+  c("Min", "Q1", "Median", "Q3", "Max"), 
+  " (", comma(pop_breaks), ")"
+)
+
+acs_add_state <- ggplot(conv_method_by_region_state, aes(x = diff_EUCA, y = `diff_Non-EUCA`)) +
+  geom_abline(intercept = 0, slope = 1, linetype = "dashed", color = "grey50", linewidth = 0.6) +
+  geom_point(
+    aes(size = pop), 
+    fill = "#0072B2", 
+    color = "#003049", 
+    alpha = 0.85, 
+    shape = 21, 
+    stroke = 0.5
+  ) +
+  scale_size_area(
+    name = "Total Unauthorized\nPopulation Size",
+    breaks = pop_breaks,
+    labels = pop_labels,
+    max_size = 9,
+    guide = guide_legend(
+      override.aes = list(
+        fill = "grey75",    
+        color = "grey30",
+        alpha = 1
+      )
+    )
+  ) +
+  theme_minimal(base_size = 12) +
+  labs(
+    x = "EUCA Change in Arrests per 1k",
+    y = "Non-EUCA Change in Arrests per 1k",
+  ) +
+  theme(
+    legend.position = "right",
+    legend.title = element_text(face = "bold"),
+    panel.grid.minor = element_blank()
+  ) +
+  xlim(min(c(conv_method_by_region_state$diff_EUCA, conv_method_by_region_state$`diff_Non-EUCA`)), max(c(conv_method_by_region_state$diff_EUCA, conv_method_by_region_state$`diff_Non-EUCA`))) +
+  ylim(min(c(conv_method_by_region_state$diff_EUCA, conv_method_by_region_state$`diff_Non-EUCA`)), max(c(conv_method_by_region_state$diff_EUCA, conv_method_by_region_state$`diff_Non-EUCA`)))
+
+
+
+conv_method_by_region_aor <- conv_method_aor %>% 
+  pivot_wider(id_cols = aor, names_from = region, values_from = c(diff, pop)) %>% 
+  mutate(pop = pop_EUCA+`pop_Non-EUCA`)
+
+pop_vals <- na.omit(conv_method_by_region_aor$pop)
+pop_breaks <- as.numeric(quantile(pop_vals, probs = c(0, 0.25, 0.5, 0.75, 1)))
+pop_labels <- paste0(
+  c("Min", "Q1", "Median", "Q3", "Max"), 
+  " (", comma(pop_breaks), ")"
+)
+
+acs_add_aor <- ggplot(conv_method_by_region_aor, aes(x = diff_EUCA, y = `diff_Non-EUCA`)) +
+  geom_abline(intercept = 0, slope = 1, linetype = "dashed", color = "grey50", linewidth = 0.6) +
+  geom_point(
+    aes(size = pop), 
+    fill = "#0072B2", 
+    color = "#003049", 
+    alpha = 0.85, 
+    shape = 21, 
+    stroke = 0.5
+  ) +
+  scale_size_area(
+    name = "Total Unauthorized\nPopulation Size",
+    breaks = pop_breaks,
+    labels = pop_labels,
+    max_size = 9,
+    guide = guide_legend(
+      override.aes = list(
+        fill = "grey75",    
+        color = "grey30",
+        alpha = 1
+      )
+    )
+  ) +
+  theme_minimal(base_size = 12) +
+  labs(
+    x = "EUCA Change in Arrests per 1k",
+    y = "Non-EUCA Change in Arrests per 1k",
+  ) +
+  theme(
+    legend.position = "right",
+    legend.title = element_text(face = "bold"),
+    panel.grid.minor = element_blank()
+  ) +
+  xlim(min(c(conv_method_by_region_aor$diff_EUCA, conv_method_by_region_aor$`diff_Non-EUCA`)), max(c(conv_method_by_region_aor$diff_EUCA, conv_method_by_region_aor$`diff_Non-EUCA`))) +
+  ylim(min(c(conv_method_by_region_aor$diff_EUCA, conv_method_by_region_aor$`diff_Non-EUCA`)), max(c(conv_method_by_region_aor$diff_EUCA, conv_method_by_region_aor$`diff_Non-EUCA`)))
+```
+
+
+Multiplicative
+```{r, mult_analysis}
+trajectory <- read_csv("../data/processed/glm_trajectory_type_threatlevel_convicted_ACS_MPI_AOR.csv")
+
+n_days_pre <- abs(min(trajectory$window)) * 60
+n_days_post <- (max(trajectory$window) + 1) * 60 + 1
+
+conv_method_aor <- aggregate_data_aor(trajectory, c("region", "aor", "window"), "pop_MPI", TRUE) %>%
+  mutate(window = ifelse(window < 0, -1, 0)) %>%
+  group_by(window, region, aor, pop) %>%
+  summarize(n_arrests = sum(n_arrests)) %>%
+  mutate(ratio = n_arrests/pop *1000,
+         ratio_annualized = n_arrests/pop*1000*ifelse(window == -1, 365.25/n_days_pre, 365.25/n_days_post))
+
+aors_above_threshold_euca <- (conv_method_aor %>%
+  filter(region == "EUCA" & window == "-1" & pop > 10000)) %>%
+  ungroup() %>%
+  select(aor, pop)
+
+aors_above_threshold_noneuca <- (conv_method_aor %>%
+  filter(region == "nonEUCA" & window == "-1" & aor %in% aors_above_threshold_euca$aor)) %>%
+  ungroup() %>%
+  select(aor, pop)
+
+conv_method_aor_euca <- conv_method_aor %>%
+  filter(region == "EUCA" & aor %in% aors_above_threshold_euca$aor) %>%
+  pivot_wider(id_cols = aor, names_from = window, values_from = ratio_annualized) %>%
+  mutate(diff = `0`/`-1`) %>%
+  mutate(region = "EUCA") %>%
+  merge(aors_above_threshold_euca)
+
+conv_method_aor_noneuca <- conv_method_aor %>%
+  filter(region == "nonEUCA" & aor %in% aors_above_threshold_noneuca$aor) %>%
+  pivot_wider(id_cols = aor, names_from = window, values_from = ratio_annualized) %>%
+  mutate(diff = `0`/`-1`) %>%
+  mutate(region = "Non-EUCA") %>%
+  merge(aors_above_threshold_noneuca)
+
+conv_method_aor <- rbind(conv_method_aor_euca, conv_method_aor_noneuca)
+
+gaps_widen <- conv_method_aor_euca %>%
+  select(aor, diff) %>%
+  rename("diff_euca" = "diff") %>%
+  merge(conv_method_aor_noneuca %>% select(aor, diff)) %>%
+  mutate(diff = diff/diff_euca)
+
+
+trajectory <- read_csv("../data/processed/glm_trajectory_type_threatlevel_convicted_ACS_MPI.csv")
+conv_method_state <- aggregate_data_state(trajectory, c("region", "state", "window"), "pop_MPI", TRUE) %>%
+  mutate(window = ifelse(window < 0, -1, 0)) %>%
+  group_by(window, region, state, pop) %>%
+  summarize(n_arrests = sum(n_arrests)) %>%
+  mutate(ratio = n_arrests/pop *1000,
+         ratio_annualized = n_arrests/pop*1000*ifelse(window == -1, 365.25/n_days_pre, 365.25/n_days_post))
+
+states_above_threshold_euca <- (conv_method_state %>%
+  filter(region == "EUCA" & window == "-1" & pop > 10000)) %>%
+  ungroup() %>%
+  select(state, pop)
+
+states_above_threshold_noneuca <- (conv_method_state %>%
+  filter(region == "nonEUCA" & window == "-1" & state %in% states_above_threshold_euca$state)) %>%
+  ungroup() %>%
+  select(state, pop)
+
+conv_method_state_euca <- conv_method_state %>%
+  filter(region == "EUCA" & state %in% states_above_threshold_euca$state) %>%
+  pivot_wider(id_cols = state, names_from = window, values_from = ratio_annualized) %>%
+  mutate(diff = `0`/`-1`) %>%
+  mutate(region = "EUCA") %>%
+  merge(states_above_threshold_euca)
+
+conv_method_state_noneuca <- conv_method_state %>%
+  filter(region == "nonEUCA" & state %in% states_above_threshold_noneuca$state) %>%
+  pivot_wider(id_cols = state, names_from = window, values_from = ratio_annualized) %>%
+  mutate(diff = `0`/`-1`) %>%
+  mutate(region = "Non-EUCA") %>%
+  merge(states_above_threshold_noneuca)
+
+conv_method_state <- rbind(conv_method_state_euca, conv_method_state_noneuca)
+
+gaps_widen <- conv_method_state_euca %>%
+  select(state, diff) %>%
+  rename("diff_euca" = "diff") %>%
+  merge(conv_method_state_noneuca %>% select(state, diff)) %>%
+  mutate(diff = diff/diff_euca)
+```
+
+```{r, echo = FALSE}
+jpos <- position_jitter(width = 0.12, height = 0, seed = 78483)
+
+conv_method_by_region_state <- conv_method_state %>% 
+  pivot_wider(id_cols = state, names_from = region, values_from = c(diff, pop)) %>% 
+  mutate(pop = pop_EUCA+`pop_Non-EUCA`)
+
+pop_vals <- na.omit(conv_method_by_region_state$pop)
+pop_breaks <- as.numeric(quantile(pop_vals, probs = c(0, 0.25, 0.5, 0.75, 1)))
+pop_labels <- paste0(
+  c("Min", "Q1", "Median", "Q3", "Max"), 
+  " (", comma(pop_breaks), ")"
+)
+
+mult_state <- ggplot(conv_method_by_region_state, aes(x = diff_EUCA, y = `diff_Non-EUCA`)) +
+  geom_abline(intercept = 0, slope = 1, linetype = "dashed", color = "grey50", linewidth = 0.6) +
+  geom_point(
+    aes(size = pop), 
+    fill = "#0072B2", 
+    color = "#003049", 
+    alpha = 0.85, 
+    shape = 21, 
+    stroke = 0.5
+  ) +
+  # geom_text_repel(
+  #   data = subset(conv_method_by_region_state, diff_EUCA > 14),
+  #   aes(label = state),
+  #   size = 3.5,
+  #   box.padding = 0.4,
+  #   point.padding = 0.3,
+  #   min.segment.length = 0
+  # ) +
+  scale_size_area(
+    name = "Total Unauthorized\nPopulation Size",
+    breaks = pop_breaks,
+    labels = pop_labels,
+    max_size = 9,
+    guide = guide_legend(
+      override.aes = list(
+        fill = "grey75",    
+        color = "grey30",
+        alpha = 1
+      )
+    )
+  ) +
+  theme_minimal(base_size = 12) +
+  labs(
+    x = "EUCA Relative Change in Arrests",
+    y = "Non-EUCA Relative Change in Arrests",
+  ) +
+  theme(
+    legend.position = "right",
+    legend.title = element_text(face = "bold"),
+    panel.grid.minor = element_blank()
+  ) +
+  xlim(min(c(conv_method_by_region_state$diff_EUCA, conv_method_by_region_state$`diff_Non-EUCA`)), max(c(conv_method_by_region_state$diff_EUCA, conv_method_by_region_state$`diff_Non-EUCA`))) +
+  ylim(min(c(conv_method_by_region_state$diff_EUCA, conv_method_by_region_state$`diff_Non-EUCA`)), max(c(conv_method_by_region_state$diff_EUCA, conv_method_by_region_state$`diff_Non-EUCA`)))
+
+
+
+conv_method_by_region_aor <- conv_method_aor %>% 
+  pivot_wider(id_cols = aor, names_from = region, values_from = c(diff, pop)) %>% 
+  mutate(pop = pop_EUCA+`pop_Non-EUCA`)
+
+pop_vals <- na.omit(conv_method_by_region_aor$pop)
+pop_breaks <- as.numeric(quantile(pop_vals, probs = c(0, 0.25, 0.5, 0.75, 1)))
+pop_labels <- paste0(
+  c("Min", "Q1", "Median", "Q3", "Max"), 
+  " (", comma(pop_breaks), ")"
+)
+
+mult_aor <- ggplot(conv_method_by_region_aor, aes(x = diff_EUCA, y = `diff_Non-EUCA`)) +
+  geom_abline(intercept = 0, slope = 1, linetype = "dashed", color = "grey50", linewidth = 0.6) +
+  geom_point(
+    aes(size = pop), 
+    fill = "#0072B2", 
+    color = "#003049", 
+    alpha = 0.85, 
+    shape = 21, 
+    stroke = 0.5
+  ) +
+  scale_size_area(
+    name = "Total Unauthorized\nPopulation Size",
+    breaks = pop_breaks,
+    labels = pop_labels,
+    max_size = 9,
+    guide = guide_legend(
+      override.aes = list(
+        fill = "grey75",    
+        color = "grey30",
+        alpha = 1
+      )
+    )
+  ) +
+  theme_minimal(base_size = 12) +
+  labs(
+    x = "EUCA Relative Change in Arrests",
+    y = "Non-EUCA Relative Change in Arrests",
+  ) +
+  theme(
+    legend.position = "right",
+    legend.title = element_text(face = "bold"),
+    panel.grid.minor = element_blank()
+  ) +
+  xlim(min(c(conv_method_by_region_aor$diff_EUCA, conv_method_by_region_aor$`diff_Non-EUCA`)), max(c(conv_method_by_region_aor$diff_EUCA, conv_method_by_region_aor$`diff_Non-EUCA`))) +
+  ylim(min(c(conv_method_by_region_aor$diff_EUCA, conv_method_by_region_aor$`diff_Non-EUCA`)), max(c(conv_method_by_region_aor$diff_EUCA, conv_method_by_region_aor$`diff_Non-EUCA`)))
+
+print(paste0("Proportion of undocumented population above the dashed line in multiplicative fig: ", sum(conv_method_by_region_state[conv_method_by_region_state$`diff_Non-EUCA` > conv_method_by_region_state$diff_EUCA, "pop"])/sum(conv_method_by_region_state$pop)))
+             
+print(paste0("Num states above dashed line: ", sum(conv_method_by_region_state$`diff_Non-EUCA` > conv_method_by_region_state$diff_EUCA)))
+
+print(paste0("Total states: ", nrow(conv_method_by_region_state)))
+```
+
+
+```{r, echo = FALSE}
+(acs_add_state | acs_add_aor) +
+  plot_annotation(tag_levels = 'a') & 
+  theme(
+    plot.tag = element_text(face = "bold")
+  )
+ggsave("../figures/supplement/acs_denoms_fig3.pdf", height = 4, width = 10)
+```
+
+Create AOR and state figures
+```{r, echo = FALSE}
+(mpi_add_aor|mult_aor)+
+  plot_layout(guides = "collect") +
+  plot_annotation(tag_levels = 'a') & 
+  theme( plot.tag = element_text(face = "bold"))
+
+ggsave("../figures/supplement/mpi_aor_fig3.pdf", height = 4, width = 10)
+
+(mpi_add_state | mult_state) +
+  plot_layout(guides = "collect") +
+  plot_annotation(tag_levels = 'a') & 
+  theme(
+    plot.tag = element_text(face = "bold")
+  )
+ggsave("../figures/main_text/mpi_fig3.pdf", height = 4, width = 10)
+```
+
+
+Alternate base period
+```{r, echo = FALSE}
+trajectory <- read_csv("../data/processed/glm_trajectory_type_threatlevel_convicted_ACS_MPI_AOR.csv")
+
+n_days_pre <- abs(min(trajectory$window)) * 60
+n_days_post <- (max(trajectory$window) + 1) * 60 + 1
+
+conv_method_aor <- aggregate_data_aor(trajectory, c("region", "aor", "window"), "pop_MPI", TRUE) %>%
+  mutate(window = window + 1) %>%
+  filter(window < 6) %>%
+  mutate(window = ifelse(window < 0, -1, 0)) %>%
+  group_by(window, region, aor, pop) %>%
+  summarize(n_arrests = sum(n_arrests)) %>%
+  mutate(ratio = n_arrests/pop *1000,
+         ratio_annualized = n_arrests/pop*1000*ifelse(window == -1, 365.25/n_days_pre, 365.25/n_days_post))
+
+aors_above_threshold_euca <- (conv_method_aor %>%
+  filter(region == "EUCA" & window == "-1" & pop > 10000)) %>%
+  ungroup() %>%
+  select(aor, pop)
+
+aors_above_threshold_noneuca <- (conv_method_aor %>%
+  filter(region == "nonEUCA" & window == "-1" & aor %in% aors_above_threshold_euca$aor)) %>%
+  ungroup() %>%
+  select(aor, pop)
+
+conv_method_aor_euca <- conv_method_aor %>%
+  filter(region == "EUCA" & aor %in% aors_above_threshold_euca$aor) %>%
+  pivot_wider(id_cols = aor, names_from = window, values_from = ratio_annualized) %>%
+  mutate(diff = `0`-`-1`) %>%
+  mutate(region = "EUCA") %>%
+  merge(aors_above_threshold_euca)
+
+conv_method_aor_noneuca <- conv_method_aor %>%
+  filter(region == "nonEUCA" & aor %in% aors_above_threshold_noneuca$aor) %>%
+  pivot_wider(id_cols = aor, names_from = window, values_from = ratio_annualized) %>%
+  mutate(diff = `0`-`-1`) %>%
+  mutate(region = "Non-EUCA") %>%
+  merge(aors_above_threshold_noneuca)
+
+conv_method_aor <- rbind(conv_method_aor_euca, conv_method_aor_noneuca)
+
+gaps_widen <- conv_method_aor_euca %>%
+  select(aor, diff) %>%
+  rename("diff_euca" = "diff") %>%
+  merge(conv_method_aor_noneuca %>% select(aor, diff)) %>%
+  mutate(diff = diff-diff_euca)
+
+
+trajectory <- read_csv("../data/processed/glm_trajectory_type_threatlevel_convicted_ACS_MPI.csv")
+conv_method_state <- aggregate_data_state(trajectory, c("region", "state", "window"), "pop_MPI", TRUE) %>%
+  mutate(window = window + 1) %>%
+  filter(window < 6) %>%
+  mutate(window = ifelse(window < 0, -1, 0)) %>%
+  group_by(window, region, state, pop) %>%
+  summarize(n_arrests = sum(n_arrests)) %>%
+  mutate(ratio = n_arrests/pop *1000,
+         ratio_annualized = n_arrests/pop*1000*ifelse(window == -1, 365.25/n_days_pre, 365.25/n_days_post))
+
+states_above_threshold_euca <- (conv_method_state %>%
+  filter(region == "EUCA" & window == "-1" & pop > 10000)) %>%
+  ungroup() %>%
+  select(state, pop)
+
+states_above_threshold_noneuca <- (conv_method_state %>%
+  filter(region == "nonEUCA" & window == "-1" & state %in% states_above_threshold_euca$state)) %>%
+  ungroup() %>%
+  select(state, pop)
+
+conv_method_state_euca <- conv_method_state %>%
+  filter(region == "EUCA" & state %in% states_above_threshold_euca$state) %>%
+  pivot_wider(id_cols = state, names_from = window, values_from = ratio_annualized) %>%
+  mutate(diff = `0`-`-1`) %>%
+  mutate(region = "EUCA") %>%
+  merge(states_above_threshold_euca)
+
+conv_method_state_noneuca <- conv_method_state %>%
+  filter(region == "nonEUCA" & state %in% states_above_threshold_noneuca$state) %>%
+  pivot_wider(id_cols = state, names_from = window, values_from = ratio_annualized) %>%
+  mutate(diff = `0`-`-1`) %>%
+  mutate(region = "Non-EUCA") %>%
+  merge(states_above_threshold_noneuca)
+
+conv_method_state <- rbind(conv_method_state_euca, conv_method_state_noneuca)
+
+gaps_widen <- conv_method_state_euca %>%
+  select(state, diff) %>%
+  rename("diff_euca" = "diff") %>%
+  merge(conv_method_state_noneuca %>% select(state, diff)) %>%
+  mutate(diff = diff-diff_euca)
+```
+
+```{r, echo = FALSE}
+jpos <- position_jitter(width = 0.12, height = 0, seed = 78483)
+
+conv_method_by_region_state <- conv_method_state %>% 
+  pivot_wider(id_cols = state, names_from = region, values_from = c(diff, pop)) %>% 
+  mutate(pop = pop_EUCA+`pop_Non-EUCA`)
+
+pop_vals <- na.omit(conv_method_by_region_state$pop)
+pop_breaks <- as.numeric(quantile(pop_vals, probs = c(0, 0.25, 0.5, 0.75, 1)))
+pop_labels <- paste0(
+  c("Min", "Q1", "Median", "Q3", "Max"), 
+  " (", comma(pop_breaks), ")"
+)
+
+part_a <- ggplot(conv_method_by_region_state, aes(x = diff_EUCA, y = `diff_Non-EUCA`)) +
+  geom_abline(intercept = 0, slope = 1, linetype = "dashed", color = "grey50", linewidth = 0.6) +
+  geom_point(
+    aes(size = pop), 
+    fill = "#0072B2", 
+    color = "#003049", 
+    alpha = 0.85, 
+    shape = 21, 
+    stroke = 0.5
+  ) +
+  scale_size_area(
+    name = "Total Unauthorized\nPopulation Size",
+    breaks = pop_breaks,
+    labels = pop_labels,
+    max_size = 9,
+    guide = guide_legend(
+      override.aes = list(
+        fill = "grey75",    
+        color = "grey30",
+        alpha = 1
+      )
+    )
+  ) +
+  theme_minimal(base_size = 12) +
+  labs(
+    x = "EUCA Change in Arrests per 1k",
+    y = "Non-EUCA Change in Arrests per 1k",
+  ) +
+  theme(
+    legend.position = "right",
+    legend.title = element_text(face = "bold"),
+    panel.grid.minor = element_blank()
+  ) +
+  xlim(min(c(conv_method_by_region_state$diff_EUCA, conv_method_by_region_state$`diff_Non-EUCA`)), max(c(conv_method_by_region_state$diff_EUCA, conv_method_by_region_state$`diff_Non-EUCA`))) +
+  ylim(min(c(conv_method_by_region_state$diff_EUCA, conv_method_by_region_state$`diff_Non-EUCA`)), max(c(conv_method_by_region_state$diff_EUCA, conv_method_by_region_state$`diff_Non-EUCA`)))
+
+
+
+conv_method_by_region_aor <- conv_method_aor %>% 
+  pivot_wider(id_cols = aor, names_from = region, values_from = c(diff, pop)) %>% 
+  mutate(pop = pop_EUCA+`pop_Non-EUCA`)
+
+pop_vals <- na.omit(conv_method_by_region_aor$pop)
+pop_breaks <- as.numeric(quantile(pop_vals, probs = c(0, 0.25, 0.5, 0.75, 1)))
+pop_labels <- paste0(
+  c("Min", "Q1", "Median", "Q3", "Max"), 
+  " (", comma(pop_breaks), ")"
+)
+
+part_b <- ggplot(conv_method_by_region_aor, aes(x = diff_EUCA, y = `diff_Non-EUCA`)) +
+  geom_abline(intercept = 0, slope = 1, linetype = "dashed", color = "grey50", linewidth = 0.6) +
+  geom_point(
+    aes(size = pop), 
+    fill = "#0072B2", 
+    color = "#003049", 
+    alpha = 0.85, 
+    shape = 21, 
+    stroke = 0.5
+  ) +
+  scale_size_area(
+    name = "Total Unauthorized\nPopulation Size",
+    breaks = pop_breaks,
+    labels = pop_labels,
+    max_size = 9,
+    guide = guide_legend(
+      override.aes = list(
+        fill = "grey75",    
+        color = "grey30",
+        alpha = 1
+      )
+    )
+  ) +
+  theme_minimal(base_size = 12) +
+  labs(
+    x = "EUCA Change in Arrests per 1k",
+    y = "Non-EUCA Change in Arrests per 1k",
+  ) +
+  theme(
+    legend.position = "right",
+    legend.title = element_text(face = "bold"),
+    panel.grid.minor = element_blank()
+  ) +
+  xlim(min(c(conv_method_by_region_aor$diff_EUCA, conv_method_by_region_aor$`diff_Non-EUCA`)), max(c(conv_method_by_region_aor$diff_EUCA, conv_method_by_region_aor$`diff_Non-EUCA`))) +
+  ylim(min(c(conv_method_by_region_aor$diff_EUCA, conv_method_by_region_aor$`diff_Non-EUCA`)), max(c(conv_method_by_region_aor$diff_EUCA, conv_method_by_region_aor$`diff_Non-EUCA`)))
+
+
+(part_a | part_b) +
+  plot_annotation(tag_levels = 'a') & 
+  theme(
+    plot.tag = element_text(face = "bold")
+  )
+ggsave("../figures/supplement/alternate_base_period_fig3.pdf", height = 4, width = 10)
+```
+
+Remove duplicates
+```{r, echo = FALSE}
+trajectory <- read_csv("../data/processed/glm_trajectory_type_threatlevel_convicted_ACS_MPI_AOR_no_duplicates.csv")
+
+n_days_pre <- abs(min(trajectory$window)) * 60
+n_days_post <- (max(trajectory$window) + 1) * 60 + 1
+
+conv_method_aor <- aggregate_data_aor(trajectory, c("region", "aor", "window"), "pop_MPI", TRUE) %>%
+  mutate(window = ifelse(window < 0, -1, 0)) %>%
+  group_by(window, region, aor, pop) %>%
+  summarize(n_arrests = sum(n_arrests)) %>%
+  mutate(ratio = n_arrests/pop *1000,
+         ratio_annualized = n_arrests/pop*1000*ifelse(window == -1, 365.25/n_days_pre, 365.25/n_days_post))
+
+aors_above_threshold_euca <- (conv_method_aor %>%
+  filter(region == "EUCA" & window == "-1" & pop > 10000)) %>%
+  ungroup() %>%
+  select(aor, pop)
+
+aors_above_threshold_noneuca <- (conv_method_aor %>%
+  filter(region == "nonEUCA" & window == "-1" & aor %in% aors_above_threshold_euca$aor)) %>%
+  ungroup() %>%
+  select(aor, pop)
+
+conv_method_aor_euca <- conv_method_aor %>%
+  filter(region == "EUCA" & aor %in% aors_above_threshold_euca$aor) %>%
+  pivot_wider(id_cols = aor, names_from = window, values_from = ratio_annualized) %>%
+  mutate(diff = `0`-`-1`) %>%
+  mutate(region = "EUCA") %>%
+  merge(aors_above_threshold_euca)
+
+conv_method_aor_noneuca <- conv_method_aor %>%
+  filter(region == "nonEUCA" & aor %in% aors_above_threshold_noneuca$aor) %>%
+  pivot_wider(id_cols = aor, names_from = window, values_from = ratio_annualized) %>%
+  mutate(diff = `0`-`-1`) %>%
+  mutate(region = "Non-EUCA") %>%
+  merge(aors_above_threshold_noneuca)
+
+conv_method_aor <- rbind(conv_method_aor_euca, conv_method_aor_noneuca)
+
+gaps_widen <- conv_method_aor_euca %>%
+  select(aor, diff) %>%
+  rename("diff_euca" = "diff") %>%
+  merge(conv_method_aor_noneuca %>% select(aor, diff)) %>%
+  mutate(diff = diff-diff_euca)
+
+
+trajectory <- read_csv("../data/processed/glm_trajectory_type_threatlevel_convicted_ACS_MPI_no_duplicates.csv")
+conv_method_state <- aggregate_data_state(trajectory, c("region", "state", "window"), "pop_MPI", TRUE) %>%
+  mutate(window = ifelse(window < 0, -1, 0)) %>%
+  group_by(window, region, state, pop) %>%
+  summarize(n_arrests = sum(n_arrests)) %>%
+  mutate(ratio = n_arrests/pop *1000,
+         ratio_annualized = n_arrests/pop*1000*ifelse(window == -1, 365.25/n_days_pre, 365.25/n_days_post))
+
+states_above_threshold_euca <- (conv_method_state %>%
+  filter(region == "EUCA" & window == "-1" & pop > 10000)) %>%
+  ungroup() %>%
+  select(state, pop)
+
+states_above_threshold_noneuca <- (conv_method_state %>%
+  filter(region == "nonEUCA" & window == "-1" & state %in% states_above_threshold_euca$state)) %>%
+  ungroup() %>%
+  select(state, pop)
+
+conv_method_state_euca <- conv_method_state %>%
+  filter(region == "EUCA" & state %in% states_above_threshold_euca$state) %>%
+  pivot_wider(id_cols = state, names_from = window, values_from = ratio_annualized) %>%
+  mutate(diff = `0`-`-1`) %>%
+  mutate(region = "EUCA") %>%
+  merge(states_above_threshold_euca)
+
+conv_method_state_noneuca <- conv_method_state %>%
+  filter(region == "nonEUCA" & state %in% states_above_threshold_noneuca$state) %>%
+  pivot_wider(id_cols = state, names_from = window, values_from = ratio_annualized) %>%
+  mutate(diff = `0`-`-1`) %>%
+  mutate(region = "Non-EUCA") %>%
+  merge(states_above_threshold_noneuca)
+
+conv_method_state <- rbind(conv_method_state_euca, conv_method_state_noneuca)
+
+gaps_widen <- conv_method_state_euca %>%
+  select(state, diff) %>%
+  rename("diff_euca" = "diff") %>%
+  merge(conv_method_state_noneuca %>% select(state, diff)) %>%
+  mutate(diff = diff-diff_euca)
+```
+
+```{r, echo = FALSE}
+jpos <- position_jitter(width = 0.12, height = 0, seed = 78483)
+
+conv_method_by_region_state <- conv_method_state %>% 
+  pivot_wider(id_cols = state, names_from = region, values_from = c(diff, pop)) %>% 
+  mutate(pop = pop_EUCA+`pop_Non-EUCA`)
+
+pop_vals <- na.omit(conv_method_by_region_state$pop)
+pop_breaks <- as.numeric(quantile(pop_vals, probs = c(0, 0.25, 0.5, 0.75, 1)))
+pop_labels <- paste0(
+  c("Min", "Q1", "Median", "Q3", "Max"), 
+  " (", comma(pop_breaks), ")"
+)
+
+part_a <- ggplot(conv_method_by_region_state, aes(x = diff_EUCA, y = `diff_Non-EUCA`)) +
+  geom_abline(intercept = 0, slope = 1, linetype = "dashed", color = "grey50", linewidth = 0.6) +
+  geom_point(
+    aes(size = pop), 
+    fill = "#0072B2", 
+    color = "#003049", 
+    alpha = 0.85, 
+    shape = 21, 
+    stroke = 0.5
+  ) +
+  scale_size_area(
+    name = "Total Unauthorized\nPopulation Size",
+    breaks = pop_breaks,
+    labels = pop_labels,
+    max_size = 9,
+    guide = guide_legend(
+      override.aes = list(
+        fill = "grey75",    
+        color = "grey30",
+        alpha = 1
+      )
+    )
+  ) +
+  theme_minimal(base_size = 12) +
+  labs(
+    x = "EUCA Change in Arrests per 1k",
+    y = "Non-EUCA Change in Arrests per 1k",
+  ) +
+  theme(
+    legend.position = "right",
+    legend.title = element_text(face = "bold"),
+    panel.grid.minor = element_blank()
+  ) +
+  xlim(min(c(conv_method_by_region_state$diff_EUCA, conv_method_by_region_state$`diff_Non-EUCA`)), max(c(conv_method_by_region_state$diff_EUCA, conv_method_by_region_state$`diff_Non-EUCA`))) +
+  ylim(min(c(conv_method_by_region_state$diff_EUCA, conv_method_by_region_state$`diff_Non-EUCA`)), max(c(conv_method_by_region_state$diff_EUCA, conv_method_by_region_state$`diff_Non-EUCA`)))
+
+
+
+conv_method_by_region_aor <- conv_method_aor %>% 
+  pivot_wider(id_cols = aor, names_from = region, values_from = c(diff, pop)) %>% 
+  mutate(pop = pop_EUCA+`pop_Non-EUCA`)
+
+pop_vals <- na.omit(conv_method_by_region_aor$pop)
+pop_breaks <- as.numeric(quantile(pop_vals, probs = c(0, 0.25, 0.5, 0.75, 1)))
+pop_labels <- paste0(
+  c("Min", "Q1", "Median", "Q3", "Max"), 
+  " (", comma(pop_breaks), ")"
+)
+
+part_b <- ggplot(conv_method_by_region_aor, aes(x = diff_EUCA, y = `diff_Non-EUCA`)) +
+  geom_abline(intercept = 0, slope = 1, linetype = "dashed", color = "grey50", linewidth = 0.6) +
+  geom_point(
+    aes(size = pop), 
+    fill = "#0072B2", 
+    color = "#003049", 
+    alpha = 0.85, 
+    shape = 21, 
+    stroke = 0.5
+  ) +
+  scale_size_area(
+    name = "Total Unauthorized\nPopulation Size",
+    breaks = pop_breaks,
+    labels = pop_labels,
+    max_size = 9,
+    guide = guide_legend(
+      override.aes = list(
+        fill = "grey75",    
+        color = "grey30",
+        alpha = 1
+      )
+    )
+  ) +
+  theme_minimal(base_size = 12) +
+  labs(
+    x = "EUCA Change in Arrests per 1k",
+    y = "Non-EUCA Change in Arrests per 1k",
+  ) +
+  theme(
+    legend.position = "right",
+    legend.title = element_text(face = "bold"),
+    panel.grid.minor = element_blank()
+  ) +
+  xlim(min(c(conv_method_by_region_aor$diff_EUCA, conv_method_by_region_aor$`diff_Non-EUCA`)), max(c(conv_method_by_region_aor$diff_EUCA, conv_method_by_region_aor$`diff_Non-EUCA`))) +
+  ylim(min(c(conv_method_by_region_aor$diff_EUCA, conv_method_by_region_aor$`diff_Non-EUCA`)), max(c(conv_method_by_region_aor$diff_EUCA, conv_method_by_region_aor$`diff_Non-EUCA`)))
+
+
+(part_a | part_b) +
+  plot_annotation(tag_levels = 'a') & 
+  theme(
+    plot.tag = element_text(face = "bold")
+  )
+ggsave("../figures/supplement/remove_duplicates_fig3.pdf", height = 4, width = 10)
+```
+
+Remove states
+```{r, echo = FALSE}
+incomplete_states <- read_csv("../data/raw/mpi_state_region.csv") %>%
+  group_by(state) %>%
+  mutate(state = toupper(state)) %>%
+  mutate(n = n()) %>%
+  filter(n != 6) %>%
+  distinct(state)
+incomplete_states <- c(c("MAINE", "MONTANA", "NORTH DAKOTA", "SOUTH DAKOTA", "VERMONT", "WEST VIRGINIA", "WYOMING"), incomplete_states$state)
+
+trajectory <- read_csv("../data/processed/glm_trajectory_type_threatlevel_convicted_ACS_MPI.csv") %>%
+  filter(!(state %in% incomplete_states))
+
+conv_method_state <- aggregate_data_state(trajectory, c("region", "state", "window"), "pop_MPI", TRUE) %>%
+  mutate(window = ifelse(window < 0, -1, 0)) %>%
+  group_by(window, region, state, pop) %>%
+  summarize(n_arrests = sum(n_arrests)) %>%
+  mutate(ratio = n_arrests/pop *1000,
+         ratio_annualized = n_arrests/pop*1000*ifelse(window == -1, 365.25/n_days_pre, 365.25/n_days_post))
+
+states_above_threshold_euca <- (conv_method_state %>%
+  filter(region == "EUCA" & window == "-1" & pop > 0)) %>%
+  ungroup() %>%
+  select(state, pop)
+
+states_above_threshold_noneuca <- (conv_method_state %>%
+  filter(region == "nonEUCA" & window == "-1" & state %in% states_above_threshold_euca$state)) %>%
+  ungroup() %>%
+  select(state, pop)
+
+conv_method_state_euca <- conv_method_state %>%
+  filter(region == "EUCA" & state %in% states_above_threshold_euca$state) %>%
+  pivot_wider(id_cols = state, names_from = window, values_from = ratio_annualized) %>%
+  mutate(diff = `0`-`-1`) %>%
+  mutate(region = "EUCA") %>%
+  merge(states_above_threshold_euca)
+
+conv_method_state_noneuca <- conv_method_state %>%
+  filter(region == "nonEUCA" & state %in% states_above_threshold_noneuca$state) %>%
+  pivot_wider(id_cols = state, names_from = window, values_from = ratio_annualized) %>%
+  mutate(diff = `0`-`-1`) %>%
+  mutate(region = "Non-EUCA") %>%
+  merge(states_above_threshold_noneuca)
+
+conv_method <- rbind(conv_method_state_euca, conv_method_state_noneuca)
+
+gaps_widen <- conv_method_state_euca %>%
+  select(state, diff) %>%
+  rename("diff_euca" = "diff") %>%
+  merge(conv_method_state_noneuca %>% select(state, diff)) %>%
+  mutate(diff = diff-diff_euca)
+```
+
+```{r, echo = FALSE}
+jpos <- position_jitter(width = 0.12, height = 0, seed = 78483)
+
+conv_method_by_region_state <- conv_method %>% 
+  pivot_wider(id_cols = state, names_from = region, values_from = c(diff, pop)) %>% 
+  mutate(pop = pop_EUCA+`pop_Non-EUCA`)
+
+pop_vals <- na.omit(conv_method_by_region_state$pop)
+pop_breaks <- as.numeric(quantile(pop_vals, probs = c(0, 0.25, 0.5, 0.75, 1)))
+pop_labels <- paste0(
+  c("Min", "Q1", "Median", "Q3", "Max"), 
+  " (", comma(pop_breaks), ")"
+)
+
+ggplot(conv_method_by_region_state, aes(x = diff_EUCA, y = `diff_Non-EUCA`)) +
+  geom_abline(intercept = 0, slope = 1, linetype = "dashed", color = "grey50", linewidth = 0.6) +
+  geom_point(
+    aes(size = pop), 
+    fill = "#0072B2", 
+    color = "#003049", 
+    alpha = 0.85, 
+    shape = 21, 
+    stroke = 0.5
+  ) +
+  scale_size_area(
+    name = "Total Unauthorized\nPopulation Size",
+    breaks = pop_breaks,
+    labels = pop_labels,
+    max_size = 9,
+    guide = guide_legend(
+      override.aes = list(
+        fill = "grey75",    
+        color = "grey30",
+        alpha = 1
+      )
+    )
+  ) +
+  theme_minimal(base_size = 12) +
+  labs(
+    x = "EUCA Change in Arrests per 1k",
+    y = "Non-EUCA Change in Arrests per 1k",
+  ) +
+  theme(
+    legend.position = "right",
+    legend.title = element_text(face = "bold"),
+    panel.grid.minor = element_blank()
+  ) +
+  xlim(min(c(conv_method_by_region_state$diff_EUCA, conv_method_by_region_state$`diff_Non-EUCA`)), max(c(conv_method_by_region_state$diff_EUCA, conv_method_by_region_state$`diff_Non-EUCA`))) +
+  ylim(min(c(conv_method_by_region_state$diff_EUCA, conv_method_by_region_state$`diff_Non-EUCA`)), max(c(conv_method_by_region_state$diff_EUCA, conv_method_by_region_state$`diff_Non-EUCA`)))
+ggsave("../figures/supplement/remove_incomplete_states_fig3.pdf", height = 4, width = 10)
+
+```

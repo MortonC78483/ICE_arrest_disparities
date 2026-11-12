@@ -1,0 +1,394 @@
+---
+title: "09_map_country_region_composition"
+author: "Claire Morton"
+date: "2026-10-12"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(haven)
+library(tidyverse)
+library(rnaturalearth)
+library(rnaturalearthdata)
+library(sf)
+library(patchwork)
+library(purrr)
+library(scales)
+library(modelsummary)
+
+```
+
+Region classifications and constants
+```{r}
+INAUG_DATE = "2025-01-20"
+WINDOW_DAYS = 60
+TOTAL_DAYS_EACH_SIDE = 9*WINDOW_DAYS
+
+
+MCA = c('MEXICO','GUATEMALA','EL SALVADOR','HONDURAS','NICARAGUA','COSTA RICA','PANAMA','BELIZE')
+
+CARIBBEAN = c('CUBA','DOMINICAN REPUBLIC','HAITI','JAMAICA','TRINIDAD AND TOBAGO','BAHAMAS','BARBADOS',
+  'ANTIGUA AND BARBUDA','SAINT LUCIA','GRENADA','DOMINICA','SAINT VINCENT AND THE GRENADINES',
+  'SAINT KITTS AND NEVIS','ST. LUCIA','ST. KITTS-NEVIS','ST. VINCENT-GRENADINES','ANTIGUA-BARBUDA',
+  'BRITISH VIRGIN ISLANDS','TURKS AND CAICOS ISLANDS','BERMUDA','NETHERLANDS ANTILLES','GUADELOUPE',
+  'CURACAO','ARUBA','ANGUILLA','MONTSERRAT','CAYMAN ISLANDS','SINT MAARTEN(DUTCH)','SINT EUSTATIUS'
+)
+SA = c('BRAZIL','COLOMBIA','VENEZUELA','ECUADOR','PERU','ARGENTINA','BOLIVIA','CHILE','PARAGUAY',
+  'URUGUAY','GUYANA','SURINAME','FRENCH GUIANA')
+ASIA = c(
+  'CHINA','INDIA','PHILIPPINES','VIETNAM','SOUTH KOREA','JAPAN','BANGLADESH','PAKISTAN',
+  'INDONESIA','MALAYSIA','THAILAND','SRI LANKA','NEPAL','BURMA','MYANMAR','CAMBODIA','LAOS',
+  'SINGAPORE','MONGOLIA','TAIWAN','AFGHANISTAN','UZBEKISTAN','KAZAKHSTAN','KYRGYZSTAN','TAJIKISTAN',
+  'TURKMENISTAN','NORTH KOREA','BHUTAN','MALDIVES','BRUNEI','IRAN','IRAQ','SYRIA','LEBANON','JORDAN',
+  'ISRAEL','YEMEN','SAUDI ARABIA','TURKEY','ARMENIA','AZERBAIJAN','GEORGIA','KUWAIT','QATAR',
+  'BAHRAIN','UNITED ARAB EMIRATES','OMAN','PALESTINE',
+  # DDP-specific spellings:
+  'CHINA, PEOPLES REPUBLIC OF','TURKIYE','KOREA','HONG KONG','MACAU','EAST TIMOR',
+  'PALESTINE BORN BEFORE 1948'
+)
+AFRICA = c(
+  'NIGERIA','ETHIOPIA','EGYPT','KENYA','GHANA','SOMALIA','SUDAN','SOUTH SUDAN','SOUTH AFRICA',
+  'SENEGAL','CAMEROON','LIBERIA','SIERRA LEONE','ERITREA','IVORY COAST',"COTE D'IVOIRE",'MALI',
+  'MOROCCO','TUNISIA','ALGERIA','UGANDA','TANZANIA','ZIMBABWE','RWANDA','BURKINA FASO','CHAD',
+  'NIGER','GAMBIA','GUINEA','TOGO','BENIN','MAURITANIA','ANGOLA','MOZAMBIQUE','ZAMBIA','MALAWI',
+  'MADAGASCAR','BOTSWANA','NAMIBIA','LESOTHO','CONGO','DEMOCRATIC REPUBLIC OF THE CONGO',
+  'CENTRAL AFRICAN REPUBLIC','EQUATORIAL GUINEA','GABON','COMOROS','CAPE VERDE','DJIBOUTI',
+  'BURUNDI','LIBYA',
+  # DDP-specific spellings:
+  'DEM REP OF THE CONGO','GUINEA-BISSAU','MAURITIUS','SAO TOME AND PRINCIPE','ESWATINI'
+)
+EUCA = c(
+  'CANADA','UNITED KINGDOM','IRELAND','GERMANY','FRANCE','ITALY','SPAIN','PORTUGAL','GREECE',
+  'RUSSIA','UKRAINE','POLAND','ROMANIA','HUNGARY','CZECH REPUBLIC','SLOVAKIA','BULGARIA','SERBIA',
+  'CROATIA','SLOVENIA','MACEDONIA','NORTH MACEDONIA','ALBANIA','BOSNIA AND HERZEGOVINA','BELGIUM',
+  'NETHERLANDS','SWEDEN','NORWAY','DENMARK','FINLAND','ICELAND','SWITZERLAND','AUSTRIA',
+  'LUXEMBOURG','CYPRUS','MALTA','ESTONIA','LATVIA','LITHUANIA','BELARUS','MOLDOVA','MONTENEGRO',
+  'KOSOVO','AUSTRALIA','NEW ZEALAND','FIJI','SAMOA','TONGA','PAPUA NEW GUINEA',
+  # DDP-specific spellings:
+  'BOSNIA-HERZEGOVINA','USSR','YUGOSLAVIA','SERBIA AND MONTENEGRO','CZECHOSLOVAKIA','ANDORRA',
+  'MONACO','MICRONESIA, FEDERATED STATES OF','MARSHALL ISLANDS','PALAU','FRENCH POLYNESIA'
+)
+
+
+get_region <- function(country){
+  if (country %in% MCA){
+    return("MCA")
+  } else if (country %in% CARIBBEAN){
+    return("CARIBBEAN")
+  } else if (country %in% SA){
+    return("SA")
+  } else if (country %in% ASIA){
+    return("ASIA")
+  } else if (country %in% AFRICA){
+    return("AFRICA")
+  } else if (country %in% EUCA){
+    return("EUCA")
+  } else{
+    return(NA)
+  }
+}
+```
+
+Create arrests dataset
+```{r}
+arrests <- read_dta("../data/processed/ddp_arrests_state_threat_gender_age_cleaned.dta") %>% 
+  filter(ApprehensionDate >= as.Date("2023-11-27") & ApprehensionDate <= as.Date("2026-07-13"))
+
+arrests <- arrests %>%
+  filter((year(ymd(ApprehensionDate)) - birth_year) >= 18) %>% # filter out children
+  select(c(ApprehensionDate, ApprehensionMethod, 
+           ApprehensionCriminality, case_threat_level,
+           state_clean, aor_short, citizenship_country)) %>%
+  mutate(threat_level = ifelse(!is.na(case_threat_level) & case_threat_level == 1, 1, 
+                               ifelse(!is.na(case_threat_level) & case_threat_level == 2, 2, 0))) %>%
+  mutate(citizenship_region = unlist(lapply(citizenship_country, get_region))) %>%
+  mutate(convicted = ifelse(ApprehensionCriminality == "1 Convicted Criminal", 1, 0)) %>%
+  select(-c(ApprehensionMethod, ApprehensionCriminality, case_threat_level))
+
+assign_window <- function(dates) {
+  days_from_inaug = as.numeric(as.Date(dates) - as.Date(INAUG_DATE))
+  window_assignment = ifelse(days_from_inaug < 0, 
+                             -((-days_from_inaug - 1) %/% WINDOW_DAYS + 1), 
+                             days_from_inaug %/% WINDOW_DAYS)
+  window_assignment = ifelse(
+    (days_from_inaug < -TOTAL_DAYS_EACH_SIDE) | (days_from_inaug > (TOTAL_DAYS_EACH_SIDE - 1)), 
+    NA, 
+    window_assignment
+  )
+  return(window_assignment)
+}
+
+arrests$window <- assign_window(arrests$ApprehensionDate)
+arrests <- arrests[!is.na(arrests$window),]
+
+# filter the arrests
+arrests <- arrests %>% filter(!is.na(citizenship_region))
+```
+
+Map
+```{r}
+world <- ne_countries(scale = "medium", returnclass = "sf", type = "map_units") %>% 
+  filter(geounit != "French Guiana" & name != "Guadeloupe" & iso_a3 != "BES") %>% 
+  mutate(admin = toupper(admin)) %>% 
+  select(admin)
+
+world[world$admin == "SÃO TOMÉ AND PRINCIPE",]$admin = "SAO TOME AND PRINCIPE"
+
+map_units <- ne_countries(type = "map_units", scale = "medium", returnclass = "sf") %>% 
+  filter(geounit == "French Guiana" | name == "Guadeloupe" | iso_a3 == "BES") %>% 
+  select(geounit, geometry) %>% 
+  mutate(geounit = toupper(geounit)) %>% 
+  rename("admin" = "geounit")
+
+map_units[map_units$admin == "CARIBBEAN NETHERLANDS",]$admin = "BONAIRE, SINT EUSTATIUS AND SABA"
+
+world <- rbind(map_units, world) %>% 
+  unique()
+
+arrests_mutated <- arrests %>%
+  mutate(citizenship_country = case_when(
+    citizenship_country %in% c("USSR", "CZECHOSLOVAKIA", "YUGOSLAVIA", "SERBIA AND MONTENEGRO") ~ "Historical / Dissolved",
+    citizenship_country == "BURMA" ~ "Myanmar",
+    citizenship_country == "TURKIYE" ~ "Turkey",
+    citizenship_country == "CZECH REPUBLIC" ~ "Czechia",
+    citizenship_country == "CAPE VERDE" ~ "Cabo Verde",
+    citizenship_country == "DEM REP OF THE CONGO" ~ "Democratic Republic of the Congo",
+    citizenship_country == "CONGO" ~ "Republic of the Congo",
+    citizenship_country == "BOSNIA-HERZEGOVINA" ~ "Bosnia and Herzegovina",
+    citizenship_country == "ST. KITTS-NEVIS" ~ "Saint Kitts and Nevis",
+    citizenship_country == "ST. VINCENT-GRENADINES" ~ "Saint Vincent and the Grenadines",
+    citizenship_country == "ST. LUCIA" ~ "Saint Lucia",
+    citizenship_country == "ANTIGUA-BARBUDA" ~ "Antigua and Barbuda",
+    citizenship_country == "SAO TOME AND PRINCIPE" ~ "Sao Tome and Principe",
+    citizenship_country == "KOREA" ~ "South Korea",
+    citizenship_country == "BAHAMAS" ~ "The Bahamas",
+    citizenship_country == "CHINA, PEOPLES REPUBLIC OF" ~ "China",
+    citizenship_country == "HONG KONG" ~ "Hong Kong S.A.R.",
+    citizenship_country == "MACAO" ~ "MACAO S.A.R",
+    citizenship_country == "MACAU" ~ "MACAO S.A.R",
+    citizenship_country == "PALESTINE BORN BEFORE 1948" ~ "Palestine",
+    citizenship_country == "MICRONESIA, FEDERATED STATES OF" ~ "Federated States of Micronesia",
+    citizenship_country == "SAO TOME AND PRINCIPE" ~ "",
+    citizenship_country == "SERBIA" ~ "Republic of Serbia",
+    citizenship_country == "TANZANIA" ~ "United Republic of Tanzania",
+    citizenship_country == "CURACAO" ~ "Curaçao",
+    citizenship_country == "SINT MAARTEN(DUTCH)" ~ "Sint Maarten",
+    citizenship_country %in% c("SINT EUSTATIUS", "NETHERLANDS ANTILLES") ~ "Bonaire, Sint Eustatius and Saba",
+    citizenship_country == "MACAU" ~ "Macao",
+    TRUE ~ citizenship_country
+  ))
+
+arrests_pre_period <- arrests %>% 
+  filter(ApprehensionDate < as.Date("2025-01-20"))
+
+arrests_post_period <- arrests %>% 
+  filter(ApprehensionDate >= as.Date("2025-01-20"))
+
+arrests_mutated <- arrests_mutated %>% 
+  mutate(citizenship_country = toupper(citizenship_country))
+
+# figure out missing countries
+setdiff(arrests_mutated$citizenship_country, world$admin)
+```
+Sum arrests by citizenship country, get proportion of each country in each region
+```{r}
+arrests_country <- arrests_mutated %>% 
+  group_by(citizenship_region) %>% 
+   mutate(n_region = n()) %>%
+  group_by(citizenship_country, n_region, citizenship_region) %>% 
+  summarize(n_country = n()) %>% 
+  mutate(prop_country_in_region = n_country/n_region)
+
+arrests_country_pre <- arrests_mutated %>% 
+  filter(window < 0) %>% 
+  group_by(citizenship_region) %>% 
+   mutate(n_region = n()) %>%
+  group_by(citizenship_country, n_region, citizenship_region) %>% 
+  summarize(n_country = n()) %>% 
+  mutate(prop_country_in_region = n_country/n_region)
+
+arrests_country_post <- arrests_mutated %>% 
+  filter(window >= 0) %>% 
+  group_by(citizenship_region) %>% 
+   mutate(n_region = n()) %>%
+  group_by(citizenship_country, n_region, citizenship_region) %>% 
+  summarize(n_country = n()) %>% 
+  mutate(prop_country_in_region = n_country/n_region)
+```
+
+```{r}
+map_data <- world %>%
+  left_join(arrests_country, by = c("admin" = "citizenship_country")) %>% 
+  filter(!is.na(citizenship_region))
+
+map_data[]
+
+all_regions <- c("Africa", "Asia", "Caribbean", "EUCA", "MCA", "SA")
+other_regions <- setdiff(all_regions, "EUCA")
+pal <- c("EUCA" = "darkgrey", 
+         setNames(scales::brewer_pal(palette = "Dark2")(length(other_regions)), other_regions))
+
+
+region_colors <- c(
+  "EUCA"   = "#555",
+  "Asia"   = "#D95F02",
+  "Africa" = "#1B9E77",
+  "Caribbean"= "#7570B3",
+  "Mexico/Central America"= "#E7298A",
+  "South America"= "#66A61E"
+)
+
+map_data <- map_data %>% 
+  mutate(citizenship_region = case_when(
+    citizenship_region == "ASIA" ~ "Asia",
+    citizenship_region == "AFRICA" ~ "Africa",
+    citizenship_region == "CARIBBEAN" ~ "Caribbean",
+    citizenship_region == "MCA" ~ "Mexico/Central America",
+    citizenship_region == "SA" ~ "South America",
+    citizenship_region == "EUCA" ~ "EUCA"))
+
+region_maxes <- map_data %>%
+  group_by(citizenship_region) %>%
+  summarise(max_prop = max(prop_country_in_region, na.rm = TRUE)) %>%
+  st_drop_geometry()
+
+regions <- unique(map_data$citizenship_region)
+
+plot_list <- map(regions, function(reg) {
+  reg_data <- map_data %>% filter(citizenship_region == reg)
+  
+  max_val <- region_maxes %>% filter(citizenship_region == reg) %>% pull(max_prop)
+  base_col <- region_colors[reg]
+  if (is.na(base_col)) base_col <- "#666666"
+  
+  ggplot(data = reg_data) +
+    geom_sf(aes(fill = prop_country_in_region), color = "#666666", size = 0.2) +
+    scale_fill_gradient(
+      low = "#FFFFFF",
+      high = base_col,
+      limits = c(0, max_val),
+      name = "Proportion"
+    ) +
+    theme_minimal() +
+    labs(
+      title = paste0(reg)) +
+    theme(
+      panel.grid = element_blank(),
+      axis.text = element_blank(),
+      axis.ticks = element_blank(),
+      plot.title = element_text(face = "bold", size = 12),
+      plot.subtitle = element_text(size = 9, color = "gray30"),
+      legend.position = "right",
+      legend.key.height = unit(0.6, "cm")
+    )
+})
+
+final_plot <- wrap_plots(plot_list, ncol = 2) +
+  plot_annotation(
+    theme = theme(
+      plot.title = element_text(face = "bold", size = 16, hjust = 0.5)
+    )
+  )
+print(final_plot)
+ggsave("../figures/supplement/map_by_region.pdf", height = 8, width = 7)
+```
+
+Region table
+```{r}
+tbl_data <- map_data %>% 
+  group_by(citizenship_region) %>% 
+  slice_max(order_by = prop_country_in_region, n = 5, with_ties = FALSE) %>% 
+  select(citizenship_region, admin, prop_country_in_region) %>% 
+  mutate(
+    admin = str_to_title(admin),
+    prop_country_in_region = sprintf("%.3f", round(prop_country_in_region, 3))
+  ) %>% 
+  st_drop_geometry() %>% 
+  rename(
+    `Region` = citizenship_region,
+    `Country` = admin,
+    `Prop. in Region` = prop_country_in_region
+  )
+
+datasummary_df(
+  tbl_data,
+  output = "latex",
+  title = "Top five countries of origin by proportion of arrests within region of origin.",
+  fmt = NULL
+)
+```
+
+PRE PERIOD
+```{r}
+tbl_data <-  world %>%
+  left_join(arrests_country_pre, by = c("admin" = "citizenship_country")) %>% 
+  filter(!is.na(citizenship_region))%>% 
+  mutate(citizenship_region = case_when(
+    citizenship_region == "ASIA" ~ "Asia",
+    citizenship_region == "AFRICA" ~ "Africa",
+    citizenship_region == "CARIBBEAN" ~ "Caribbean",
+    citizenship_region == "MCA" ~ "Mexico/Central America",
+    citizenship_region == "SA" ~ "South America",
+    citizenship_region == "EUCA" ~ "EUCA")) %>% 
+  st_drop_geometry() %>% 
+  unique() %>% 
+  group_by(citizenship_region) %>% 
+  slice_max(order_by = prop_country_in_region, n = 5, with_ties = FALSE) %>% 
+  select(citizenship_region, admin, prop_country_in_region) %>% 
+  mutate(
+    admin = str_to_title(admin),
+    prop_country_in_region = sprintf("%.3f", round(prop_country_in_region, 3))
+  ) %>% 
+  rename(
+    `Region` = citizenship_region,
+    `Country` = admin,
+    `Prop. in Region` = prop_country_in_region
+  )
+
+datasummary_df(
+  tbl_data,
+  output = "latex",
+  title = "Top five countries of origin by proportion of arrests within region of origin.",
+  fmt = NULL
+)
+```
+
+POST PERIOD
+```{r}
+tbl_data <-  world %>%
+  left_join(arrests_country_post, by = c("admin" = "citizenship_country")) %>% 
+  filter(!is.na(citizenship_region))%>% 
+  mutate(citizenship_region = case_when(
+    citizenship_region == "ASIA" ~ "Asia",
+    citizenship_region == "AFRICA" ~ "Africa",
+    citizenship_region == "CARIBBEAN" ~ "Caribbean",
+    citizenship_region == "MCA" ~ "Mexico/Central America",
+    citizenship_region == "SA" ~ "South America",
+    citizenship_region == "EUCA" ~ "EUCA")) %>% 
+  st_drop_geometry() %>% 
+  unique() %>% 
+  group_by(citizenship_region) %>% 
+  slice_max(order_by = prop_country_in_region, n = 5, with_ties = FALSE) %>% 
+  select(citizenship_region, admin, prop_country_in_region) %>% 
+  mutate(
+    admin = str_to_title(admin),
+    prop_country_in_region = sprintf("%.3f", round(prop_country_in_region, 3))
+  ) %>% 
+  rename(
+    `Region` = citizenship_region,
+    `Country` = admin,
+    `Prop. in Region` = prop_country_in_region
+  )
+
+datasummary_df(
+  tbl_data,
+  output = "latex",
+  title = "Top five countries of origin by proportion of arrests within region of origin.",
+  fmt = NULL
+)
+```
+
+```{r}
+country_data <- read_csv("../data/raw/mpi_to_us_counts.csv")
+```

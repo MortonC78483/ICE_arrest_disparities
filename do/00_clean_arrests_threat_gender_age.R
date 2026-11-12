@@ -5,24 +5,30 @@ library(arrow)
 library(dplyr)
 library(readr)
 
-# create duplicate ID dataframe
-raw_arrests <- read_parquet("data/raw/arrests-latest.parquet") %>%
-  select(unique_identifier, duplicate_likely) %>%
-  filter(duplicate_likely == T)
-write_csv(raw_arrests, "data/processed/duplicates.csv")
-
 # load raw arrests data to get the other variables
 raw_arrests <- read_parquet("data/raw/arrests-latest.parquet") %>%
- filter((as.Date(apprehension_date) >= as.Date("2022-10-01")) &
-        (as.Date(apprehension_date) <= as.Date("2026-03-10"))) %>%
+  filter((as.Date(apprehension_date) >= as.Date("2022-10-01")) &
+           (as.Date(apprehension_date) <= as.Date("2026-08-06"))) %>%
   rename("ApprehensionDate" = "apprehension_date", 
          "ApprehensionAOR" = "apprehension_aor",
          "ApprehensionMethod" = "apprehension_method",
          "ApprehensionCriminality" = "apprehension_criminality"
-         ) %>%
+  ) %>%
   select("unique_identifier", "ApprehensionDate","ApprehensionAOR",
-         "ApprehensionMethod","ApprehensionCriminality","apprehension_state",
-         "citizenship_country", "gender", "birth_year", "case_threat_level")
+         "ApprehensionMethod","ApprehensionCriminality","apprehension_state_filled_in",
+         "citizenship_country", "gender", "birth_year", "case_threat_level", "duplicate_drop_row") %>%
+  rename("apprehension_state" = "apprehension_state_filled_in")
+# raw_arrests <- read_parquet("data/raw/arrests-latest.parquet") %>%
+#  filter((as.Date(apprehension_date) >= as.Date("2022-10-01")) &
+#         (as.Date(apprehension_date) <= as.Date("2026-03-10"))) %>%
+#   rename("ApprehensionDate" = "apprehension_date", 
+#          "ApprehensionAOR" = "apprehension_aor",
+#          "ApprehensionMethod" = "apprehension_method",
+#          "ApprehensionCriminality" = "apprehension_criminality"
+#          ) %>%
+#   select("unique_identifier", "ApprehensionDate","ApprehensionAOR",
+#          "ApprehensionMethod","ApprehensionCriminality","apprehension_state",
+#          "citizenship_country", "gender", "birth_year", "case_threat_level")
          
 
 raw_arrests <- raw_arrests %>%
@@ -78,8 +84,21 @@ summary(as.factor(raw_arrests$aor_short))
 raw_arrests <- raw_arrests %>%
   filter(aor_short != "" & state_clean != "")
 
+raw_arrests_dedup <- raw_arrests %>% 
+  filter(!duplicate_drop_row)
+
+raw_arrests <- raw_arrests %>% 
+  select(-"duplicate_drop_row")
+
+raw_arrests_dedup <- raw_arrests_dedup %>% 
+  select(-"duplicate_drop_row")
+
+raw_arrests_state <- raw_arrests %>% 
+  mutate(state_clean = apprehension_state)
+
 write_dta(raw_arrests, "data/processed/ddp_arrests_state_threat_gender_age_cleaned.dta")
+write_dta(raw_arrests_dedup, "data/processed/ddp_arrests_state_threat_gender_age_cleaned_dedup.dta")
+write_dta(raw_arrests_state, "data/processed/ddp_arrests_state_threat_gender_age_cleaned_raw_state.dta")
 
 summary(as.factor(raw_arrests$aor_short))
 summary(as.factor(raw_arrests$state_clean))
-

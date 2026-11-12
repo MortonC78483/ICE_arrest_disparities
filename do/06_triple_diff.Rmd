@@ -3,8 +3,8 @@ title: "triple_diff"
 author: "Claire Morton"
 date: "2026-06-19"
 output:
-  html_document: default
   pdf_document: default
+  html_document: default
 ---
 
 ```{r setup, include=FALSE}
@@ -28,6 +28,9 @@ library(patchwork)
 trajectory <- read_csv("../data/processed/glm_trajectory_type_threatlevel_convicted_ACS_MPI.csv") 
 sum(trajectory$n_arrests)
 
+days_pre_period = abs(min(trajectory$window)) * 60
+days_post_period = (max(trajectory$window) + 1) * 60 + 1
+
 trajectory <- trajectory %>%
   mutate(conv_method = ifelse(method == "LEA", 
                               ifelse(convicted == 1, "LEA_conv", "LEA_nonconv"),
@@ -43,19 +46,20 @@ conv_method_state <- trajectory %>%
   filter(window >= -1) %>%
   mutate(window = ifelse(window >= 0, 0, -1)) %>%
   group_by(region, state, window, conv_method) %>%
-  summarize(pop_MPI = mean(pop_MPI),
-            n_arrests = mean(n_arrests)) %>%
+  summarize(pop_MPI = sum(pop_MPI), 
+            n_arrests = sum(n_arrests)) %>%
   mutate(region = ifelse(region == "EUCA", "EUCA", "nonEUCA")) %>%
   group_by(region, state, window, conv_method) %>%
   summarize(pop_MPI = sum(pop_MPI), 
             n_arrests = sum(n_arrests)) %>%
   group_by(window, region, state, conv_method, pop_MPI) %>%
   summarize(n_arrests = sum(n_arrests),
-            ratio = sum(n_arrests)/sum(pop_MPI)*1000) 
+            ratio = sum(n_arrests)/sum(pop_MPI)*1000,
+            ratio_annualized = sum(n_arrests)/sum(pop_MPI)*1000*ifelse(window == -1, 365.25/n_days_pre, 365.25/n_days_post)) 
 
 wt_fml <- as.formula("~ pop_MPI")
 model_fml <- as.formula(
-  paste0("ratio ~ i(window, region, ref = -1, ref2 = 'EUCA') | region + window")
+  paste0("ratio_annualized ~ i(window, region, ref = -1, ref2 = 'EUCA') | region + window")
 )
 
 return_p_value <- function(data){
@@ -101,19 +105,20 @@ conv_method_state <- trajectory %>%
   filter(window >= -1) %>%
   mutate(window = ifelse(window >= 0, 0, -1)) %>%
   group_by(region, state, window, conv_method) %>%
-  summarize(pop_MPI = mean(pop_MPI),
-            n_arrests = mean(n_arrests)) %>%
+  summarize(pop_MPI = sum(pop_MPI),
+            n_arrests = sum(n_arrests)) %>%
   mutate(region = ifelse(region == "EUCA", "EUCA", "nonEUCA")) %>%
   group_by(region, state, window, conv_method) %>%
   summarize(pop_MPI = sum(pop_MPI), 
             n_arrests = sum(n_arrests)) %>%
   group_by(window, region, state, conv_method, pop_MPI) %>%
   summarize(n_arrests = sum(n_arrests),
-            ratio = sum(n_arrests)/sum(pop_MPI)*1000) 
+            ratio = sum(n_arrests)/sum(pop_MPI)*1000,
+            ratio_annualized = sum(n_arrests)/sum(pop_MPI)*1000*ifelse(window == -1, 365.25/n_days_pre, 365.25/n_days_post)) 
   
 wt_fml <- as.formula("~ pop_MPI")
 model_fml <- as.formula(
-  paste0("ratio ~ i(window, region, ref = -1, ref2 = 'EUCA') | region + window")
+  paste0("ratio_annualized ~ i(window, region, ref = -1, ref2 = 'EUCA') | region + window")
 )
 
 return_p_value <- function(data){
@@ -141,6 +146,3 @@ return_p_value <- function(data){
 return_p_value(conv_method_state)
 ```
 
-```{r}
-
-```

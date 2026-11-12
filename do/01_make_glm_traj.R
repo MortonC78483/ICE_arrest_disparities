@@ -9,10 +9,7 @@ library(stringr)
 library(tidycensus)
 library(dplyr)
 
-#### constants from disparity_helpers.py ####
-INAUG_DATE = "2025-01-20"
-WINDOW_DAYS = 60
-TOTAL_DAYS_EACH_SIDE = 7*WINDOW_DAYS
+#### constants from disparity_helpers.py ###
 
 LEA_METHODS = c('287(g) Program','Anti-Smuggling','CAP Federal Incarceration','CAP Local Incarceration',
   'CAP State Incarceration','Criminal Alien Program','ERO Reprocessed Arrest',
@@ -129,10 +126,10 @@ get_method <- function(method){
 arrests <- read_dta("data/processed/ddp_arrests_state_threat_gender_age_cleaned.dta") 
 
 if(remove_duplicates){
-  duplicates <- read_csv("data/processed/duplicates.csv")
-  
-  arrests <- arrests %>%
-    filter(!(unique_identifier %in% duplicates$unique_identifier))
+  arrests <- read_dta("data/processed/ddp_arrests_state_threat_gender_age_cleaned_dedup.dta") 
+}
+if(RAW_STATE){
+  arrests <- read_dta("data/processed/ddp_arrests_state_threat_gender_age_cleaned_raw_state.dta") 
 }
 
 arrests <- arrests %>%
@@ -158,14 +155,19 @@ if(AOR == FALSE){
     filter(state_clean %in% STATES)
 } 
 
-# get time periods
-assign_window <- function(dates){
+assign_window <- function(dates) {
   days_from_inaug = as.numeric(as.Date(dates) - as.Date(INAUG_DATE))
-  window_assignment = ifelse(days_from_inaug < 0, -((-days_from_inaug - 1) %/% WINDOW_DAYS + 1),
+  window_assignment = ifelse(days_from_inaug < 0, 
+                             -((-days_from_inaug - 1) %/% WINDOW_DAYS + 1), 
                              days_from_inaug %/% WINDOW_DAYS)
-  window_assignment = ifelse(abs(days_from_inaug) > TOTAL_DAYS_EACH_SIDE, NA, window_assignment)
+  window_assignment = ifelse(
+    (days_from_inaug < -TOTAL_DAYS_EACH_SIDE) | (days_from_inaug > (TOTAL_DAYS_EACH_SIDE - 1)), 
+    NA, 
+    window_assignment
+  )
   return(window_assignment)
 }
+
 arrests$window <- assign_window(arrests$ApprehensionDate)
 arrests <- arrests[!is.na(arrests$window),]
 
@@ -362,7 +364,24 @@ if(nrow(arrests_with_denom_na) > 0){
 arrests_with_denom$pop_MPI <- replace_na(arrests_with_denom$pop_MPI, 1000)
 #25 AORs, 6 regions, 3 methods, 3 alt methods, 3 threat levels, 2 conv status, 10 periods = 81000
 
-if (AOR & remove_duplicates){
+if (FULL_PRE_PERIOD){
+  if (!AOR & !remove_duplicates){
+    print("writing dataset with long pre-period")
+    write_csv(arrests_with_denom, "data/processed/glm_trajectory_type_threatlevel_convicted_ACS_MPI_long_pre_period.csv")
+  }
+}
+
+
+arrests_with_denom <- arrests_with_denom %>%
+  filter(window >= -7)
+print(paste0("Total arrests: ", sum(arrests_with_denom$n_arrests)))
+
+if (RAW_STATE){
+  if(!AOR & !remove_duplicates){
+    print("writing raw state csv (state level)")
+    write_csv(arrests_with_denom, "data/processed/glm_trajectory_type_threatlevel_convicted_ACS_MPI_raw_state.csv")
+  }
+} else if (AOR & remove_duplicates){
   print("writing duplicates removed csv (AOR level)")
   write_csv(arrests_with_denom, "data/processed/glm_trajectory_type_threatlevel_convicted_ACS_MPI_AOR_no_duplicates.csv")
 } else if(AOR) {

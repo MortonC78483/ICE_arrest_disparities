@@ -96,22 +96,26 @@ MPI, AOR
 ```{r}
 trajectory <- read_csv("../data/processed/glm_trajectory_type_threatlevel_convicted_ACS_MPI_AOR.csv")
 
+n_days_pre <- abs(min(trajectory$window)) * 60
+n_days_post <- (max(trajectory$window) + 1) * 60 + 1
+
 trajectory_agg <- aggregate_data(trajectory, c("region", "aor", "window"), "pop_MPI", TRUE) %>%
   mutate(window = ifelse(window < 0, -1, 0)) %>%
   group_by(window, region, aor, pop) %>%
   summarize(n_arrests = sum(n_arrests)) %>%
-  mutate(ratio = n_arrests/pop *1000)
+  mutate(ratio = n_arrests/pop *1000,
+         ratio_annualized = n_arrests/pop*1000*ifelse(window == -1, 365.25/n_days_pre, 365.25/n_days_post))
 
 trajectory_agg_euca <- trajectory_agg %>%
   filter(region == "EUCA") %>%
-  pivot_wider(id_cols = aor, names_from = window, values_from = ratio) %>%
+  pivot_wider(id_cols = aor, names_from = window, values_from = ratio_annualized) %>%
   mutate(diff_euca = `0`-`-1`) %>%
   mutate(region = "EUCA") %>%
   select(diff_euca, aor)
 
 trajectory_agg %>%
   filter(region == "nonEUCA") %>%
-  pivot_wider(id_cols = aor, names_from = window, values_from = ratio) %>%
+  pivot_wider(id_cols = aor, names_from = window, values_from = ratio_annualized) %>%
   mutate(diff_noneuca = `0`-`-1`) %>%
   mutate(region = "Non-EUCA") %>%
   select(diff_noneuca, aor) %>%
@@ -128,18 +132,19 @@ trajectory_agg <- aggregate_data(trajectory, c("region", "aor", "window"), "pop_
   mutate(window = ifelse(window < 0, -1, 0)) %>%
   group_by(window, region, aor, pop) %>%
   summarize(n_arrests = sum(n_arrests)) %>%
-  mutate(ratio = n_arrests/pop *1000)
+  mutate(ratio = n_arrests/pop *1000,
+         ratio_annualized = n_arrests/pop*1000*ifelse(window == -1, 365.25/n_days_pre, 365.25/n_days_post))
 
 trajectory_agg_euca <- trajectory_agg %>%
   filter(region == "EUCA") %>%
-  pivot_wider(id_cols = aor, names_from = window, values_from = ratio) %>%
+  pivot_wider(id_cols = aor, names_from = window, values_from = ratio_annualized) %>%
   mutate(diff_euca = `0`-`-1`) %>%
   mutate(region = "EUCA") %>%
   select(diff_euca, aor)
 
 trajectory_agg %>%
   filter(region == "nonEUCA") %>%
-  pivot_wider(id_cols = aor, names_from = window, values_from = ratio) %>%
+  pivot_wider(id_cols = aor, names_from = window, values_from = ratio_annualized) %>%
   mutate(diff_noneuca = `0`-`-1`) %>%
   mutate(region = "Non-EUCA") %>%
   select(diff_noneuca, aor) %>%
@@ -228,18 +233,19 @@ trajectory_agg <- aggregate_data(trajectory, c("region", "state", "window"), "po
   mutate(window = ifelse(window < 0, -1, 0)) %>%
   group_by(window, region, state, pop) %>%
   summarize(n_arrests = sum(n_arrests)) %>%
-  mutate(ratio = n_arrests/pop *1000)
+  mutate(ratio = n_arrests/pop *1000,
+         ratio_annualized = n_arrests/pop*1000*ifelse(window == -1, 365.25/n_days_pre, 365.25/n_days_post))
 
 trajectory_agg_euca <- trajectory_agg %>%
   filter(region == "EUCA") %>%
-  pivot_wider(id_cols = state, names_from = window, values_from = ratio) %>%
+  pivot_wider(id_cols = state, names_from = window, values_from = ratio_annualized) %>%
   mutate(diff_euca = `0`-`-1`) %>%
   mutate(region = "EUCA") %>%
   select(diff_euca, state)
 
 trajectory_agg %>%
   filter(region == "nonEUCA") %>%
-  pivot_wider(id_cols = state, names_from = window, values_from = ratio) %>%
+  pivot_wider(id_cols = state, names_from = window, values_from = ratio_annualized) %>%
   mutate(diff_noneuca = `0`-`-1`) %>%
   mutate(region = "Non-EUCA") %>%
   select(diff_noneuca, state) %>%
@@ -256,18 +262,19 @@ trajectory_agg <- aggregate_data(trajectory, c("region", "state", "window"), "po
   mutate(window = ifelse(window < 0, -1, 0)) %>%
   group_by(window, region, state, pop) %>%
   summarize(n_arrests = sum(n_arrests)) %>%
-  mutate(ratio = n_arrests/pop *1000)
+  mutate(ratio = n_arrests/pop *1000,
+         ratio_annualized = n_arrests/pop*1000*ifelse(window == -1, 365.25/n_days_pre, 365.25/n_days_post))
 
 trajectory_agg_euca <- trajectory_agg %>%
   filter(region == "EUCA") %>%
-  pivot_wider(id_cols = state, names_from = window, values_from = ratio) %>%
+  pivot_wider(id_cols = state, names_from = window, values_from = ratio_annualized) %>%
   mutate(diff_euca = `0`-`-1`) %>%
   mutate(region = "EUCA") %>%
   select(diff_euca, state)
 
 trajectory_agg %>%
   filter(region == "nonEUCA") %>%
-  pivot_wider(id_cols = state, names_from = window, values_from = ratio) %>%
+  pivot_wider(id_cols = state, names_from = window, values_from = ratio_annualized) %>%
   mutate(diff_noneuca = `0`-`-1`) %>%
   mutate(region = "Non-EUCA") %>%
   select(diff_noneuca, state) %>%

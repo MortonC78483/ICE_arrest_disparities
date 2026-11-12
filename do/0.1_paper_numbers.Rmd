@@ -3,8 +3,8 @@ title: "Paper_Numbers"
 author: "Claire Morton"
 date: "2026-06-19"
 output:
-  html_document: default
   pdf_document: default
+  html_document: default
 ---
 
 ```{r setup, include=FALSE}
@@ -29,7 +29,7 @@ hist(as.Date(raw_data$apprehension_date), breaks = 20)
 # sum restricted number of total arrests 
 raw_data <- raw_data %>%
   filter((as.Date(apprehension_date) >= as.Date("2022-10-01")) &
-          (as.Date(apprehension_date) <= as.Date("2026-03-10")))
+          (as.Date(apprehension_date) <= as.Date("2026-08-06")))
 
 nrow(raw_data)
   
@@ -132,8 +132,9 @@ raw_arrests <- read_parquet("../data/raw/arrests-latest.parquet") %>%
          "ApprehensionCriminality" = "apprehension_criminality"
          ) %>%
   select("ApprehensionDate","ApprehensionAOR",
-         "ApprehensionMethod","ApprehensionCriminality","apprehension_state",
-         "citizenship_country", "gender", "birth_year", "case_threat_level")
+         "ApprehensionMethod","ApprehensionCriminality","apprehension_state_filled_in",
+         "citizenship_country", "gender", "birth_year", "case_threat_level") %>%
+  rename("apprehension_state" = "apprehension_state_filled_in")
 
 raw_arrests <- raw_arrests %>%
   mutate(aor_short = sub(" Area of Responsibility", "", ApprehensionAOR))
@@ -189,8 +190,8 @@ print("Minors:")
 sum(((year(ymd(raw_arrests$ApprehensionDate)) - raw_arrests$birth_year) < 18), na.rm = T)/nrow(raw_arrests) *100
 
 arrests <- raw_arrests %>%
-  filter((as.Date(ApprehensionDate) >= as.Date("2023-11-27")) &
-        (as.Date(ApprehensionDate) <= as.Date("2026-03-10"))) %>%
+  filter((as.Date(ApprehensionDate) >= as.Date("2023-11-27"))& #as.Date("2023-11-27")) &
+        (as.Date(ApprehensionDate) <= as.Date("2026-07-13"))) %>% #as.Date("2026-03-10"))) %>%
   filter((year(ymd(ApprehensionDate)) - birth_year) >= 18) %>% # filter out children
   select(c(ApprehensionDate, ApprehensionMethod, 
            ApprehensionCriminality, case_threat_level,
@@ -216,13 +217,18 @@ To do so, we first temporally aggregate arrests into 14 60-day periods, anchored
 ```{r}
 INAUG_DATE = "2025-01-20"
 WINDOW_DAYS = 60
-TOTAL_DAYS_EACH_SIDE = 7*WINDOW_DAYS
+TOTAL_DAYS_EACH_SIDE = 9*WINDOW_DAYS
 
-assign_window <- function(dates){
+assign_window <- function(dates) {
   days_from_inaug = as.numeric(as.Date(dates) - as.Date(INAUG_DATE))
-  window_assignment = ifelse(days_from_inaug < 0, -((-days_from_inaug - 1) %/% WINDOW_DAYS + 1),
+  window_assignment = ifelse(days_from_inaug < 0, 
+                             -((-days_from_inaug - 1) %/% WINDOW_DAYS + 1), 
                              days_from_inaug %/% WINDOW_DAYS)
-  window_assignment = ifelse(abs(days_from_inaug) > TOTAL_DAYS_EACH_SIDE, NA, window_assignment)
+  window_assignment = ifelse(
+    (days_from_inaug < -TOTAL_DAYS_EACH_SIDE) | (days_from_inaug > (TOTAL_DAYS_EACH_SIDE - 1)), 
+    NA, 
+    window_assignment
+  )
   return(window_assignment)
 }
 
@@ -232,7 +238,7 @@ print("Start of first window:")
 as.Date("2025-01-20")-60*7
 
 print("End of final window:")
-as.Date("2025-01-20")+60*7-1
+as.Date("2025-01-20")+60*9-1
 
 print("Max date available in data:")
 max((arrests %>% filter(window == max(arrests$window, na.rm = T)) )$ApprehensionDate)
@@ -250,14 +256,13 @@ nrow(arrests)
 summary(as.factor(do.call(rbind, lapply(arrests$ApprehensionMethod, get_method))))
 ```
 
-
 ```{r}
 # load raw arrests data to get the other variables
 print(paste0("Number of arrests: ", nrow(raw_arrests)))
 
 raw_arrests <- raw_arrests %>%
-  filter((as.Date(ApprehensionDate) >= as.Date("2023-11-27")) &
-        (as.Date(ApprehensionDate) <= as.Date("2026-03-10")))
+  filter((as.Date(ApprehensionDate) >= as.Date("2023-11-27")) &#as.Date("2023-11-27")) &
+        (as.Date(ApprehensionDate) <= as.Date("2026-07-13"))) #as.Date("2026-03-10")))
 print(paste0("Filtering to dates of interest: ", nrow(raw_arrests)))
 
 raw_arrests <- raw_arrests %>%
@@ -356,3 +361,17 @@ invalid_state_aor_most_common <- invalid_state_aor %>%
   summarize(n = n()) %>%
   arrange(-n)
 ```
+
+arrest types and counts
+```{r}
+n_CA <- nrow(arrests[arrests$ApprehensionMethod %in% CA_METHODS,])
+n_LEA <- nrow(arrests[arrests$ApprehensionMethod %in% LEA_METHODS,])
+n_OTHER <-nrow(arrests)-n_CA-n_LEA
+print(paste0("total arrests: ", nrow(arrests)))
+print(paste0("total CA: ", n_CA, " prop: ", n_CA/nrow(arrests)))
+print(paste0("total LEA: ",n_LEA, " prop: ", n_LEA/nrow(arrests)))
+print(paste0("total OTHER: ", n_OTHER, " prop: ", n_OTHER/nrow(arrests)))
+
+print(paste0("Invalid state/AOR combos: ", nrow(invalid_state_aor)))
+```
+

@@ -3,6 +3,7 @@ title: "make_Table_1"
 author: "Claire Morton"
 date: "2026-06-18"
 output:
+  pdf_document: default
   html_document:
     df_print: paged
 ---
@@ -13,17 +14,21 @@ library(dplyr)
 ```
 
 ```{r}
-trajectory <- read_csv("../data/processed/glm_trajectory_type_threatlevel_convicted_ACS_MPI.csv")
+trajectory <- read_csv("../data/processed/glm_trajectory_type_threatlevel_convicted_ACS_MPI.csv") %>%
+  filter(window >= -7)
+
+n_days_pre <- abs(min(trajectory$window)) * 60
+n_days_post <- (max(trajectory$window) + 1) * 60 + 1
 
 n_arrests_pre <-trajectory %>%
   filter(window < 0) %>%
   group_by(region) %>%
-  summarize(n_arrests_pre = sum(n_arrests))
+  summarize(n_arrests_pre = sum(n_arrests)/n_days_pre*365.25)
 
 n_arrests_post <- trajectory %>%
   filter(window >= 0) %>%
   group_by(region) %>%
-  summarize(n_arrests_post = sum(n_arrests))
+  summarize(n_arrests_post = sum(n_arrests)/n_days_post*365.25)
 
 pop_MPI <- trajectory %>%
   filter(window == 0 & method == "CA" & convicted == 0 & threat_level == 0) %>%
@@ -39,6 +44,7 @@ tab_EUCA <- tab %>%
   filter(region == "EUCA")
 tab_nonEUCA <- tab %>%
   filter(region != "EUCA")
+
 tab_totals <- data.frame(t(colSums(tab_nonEUCA[-1]))) %>%
   mutate(per_1k_pre = n_arrests_pre/pop_MPI*1000,
          per_1k_post = n_arrests_post/pop_MPI*1000)
@@ -50,22 +56,68 @@ tab_totals_all <- data.frame(t(colSums(tab[-1]))) %>%
 tab_totals_all$region = "All"
 
 rbind(tab_EUCA, tab_nonEUCA, tab_totals, tab_totals_all) %>%
-  mutate(per_1k_pre = round(per_1k_pre, 1),
-         per_1k_post = round(per_1k_post, 1))
+  mutate(additive_change = round(per_1k_post - per_1k_pre, 1),
+         multiplicative_change = round(per_1k_post/per_1k_pre, 1),
+         per_1k_pre = round(per_1k_pre, 1),
+         per_1k_post = round(per_1k_post, 1),
+         n_arrests_pre = round(n_arrests_pre, 0),
+         n_arrests_post = round(n_arrests_post, 0))
+```
+
+Calculate excess arrests (additive)
+```{r}
+# EUCA_post = tab_EUCA$n_arrests_post[1]
+# EUCA_pre = tab_EUCA$n_arrests_pre[1]
+# EUCA_pop = tab_EUCA$pop_MPI[1]
+# 
+# nonEUCA_post = tab_totals$n_arrests_post[1]
+# nonEUCA_pre = tab_totals$n_arrests_pre[1]
+# nonEUCA_pop = tab_totals$pop_MPI[1]
+# # for nonEUCA arrests, the number of arrests in the pre-period scaled up to post period
+# nonEUCA_base = nonEUCA_pre * n_days_post/n_days_pre
+# 
+# # daily arrest rate difference for EUCA arrests
+# EUCA_rate_diff = (EUCA_post/(EUCA_pop*n_days_post)) - (EUCA_pre/(EUCA_pop*n_days_pre))
+# pred = (nonEUCA_base + EUCA_rate_diff*n_days_post*nonEUCA_pop)
+# excess_additive = nonEUCA_post - pred
+# print(paste0("Predicted additive arrests:", round(pred, 2)))
+# print(paste0("Additive Excess Arrests: ", round(excess_additive, 2)))
+```
+
+Calculate excess arrests (multiplicative)
+```{r}
+# EUCA_post = tab_EUCA$n_arrests_post[1]
+# EUCA_pre = tab_EUCA$n_arrests_pre[1]
+# EUCA_pop = tab_EUCA$pop_MPI[1]
+# 
+# nonEUCA_post = tab_totals$n_arrests_post[1]
+# nonEUCA_pre = tab_totals$n_arrests_pre[1]
+# nonEUCA_pop = tab_totals$pop_MPI[1]
+# nonEUCA_base = nonEUCA_pre * (n_days_post / n_days_pre)
+# 
+# # rate difference
+# EUCA_rate_diff = (EUCA_post/n_days_post)/(EUCA_pre/n_days_pre)
+# excess_mult = nonEUCA_post - nonEUCA_base*EUCA_rate_diff
+# print(paste0("Multiplicative Excess Arrests: ", round(excess_mult, 2)))
 ```
 
 ```{r}
-trajectory <- read_csv("../data/processed/glm_trajectory_type_threatlevel_convicted_ACS_MPI.csv")
+trajectory <- read_csv("../data/processed/glm_trajectory_type_threatlevel_convicted_ACS_MPI.csv") %>%
+  filter(window >= -7)
+
+n_days_pre <- abs(min(trajectory$window)) * 60
+n_days_post <- (max(trajectory$window) + 1) * 60 + 1
+
 
 n_arrests_pre <-trajectory %>%
   filter(window < 0) %>%
   group_by(region) %>%
-  summarize(n_arrests_pre = sum(n_arrests))
+  summarize(n_arrests_pre = sum(n_arrests) / n_days_pre * 365.25)
 
 n_arrests_post <- trajectory %>%
   filter(window >= 0) %>%
   group_by(region) %>%
-  summarize(n_arrests_post = sum(n_arrests))
+  summarize(n_arrests_post = sum(n_arrests) / n_days_post * 365.25)
 
 pop_ACS <- trajectory %>%
   filter(window == 0 & method == "CA" & convicted == 0 & threat_level == 0) %>%
@@ -92,6 +144,10 @@ tab_totals_all <- data.frame(t(colSums(tab[-1]))) %>%
 tab_totals_all$region = "All"
 
 rbind(tab_EUCA, tab_nonEUCA, tab_totals, tab_totals_all) %>%
-  mutate(per_1k_pre = round(per_1k_pre, 1),
-         per_1k_post = round(per_1k_post, 1))
+  mutate(additive_change = round(per_1k_post - per_1k_pre, 1),
+         multiplicative_change = round(per_1k_post/per_1k_pre, 1),
+         per_1k_pre = round(per_1k_pre, 1),
+         per_1k_post = round(per_1k_post, 1),
+         n_arrests_pre = round(n_arrests_pre, 0),
+         n_arrests_post = round(n_arrests_post, 0))
 ```
