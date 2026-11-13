@@ -445,6 +445,7 @@ data_nonEUCA <- aggregate_data(trajectory, c("region", "window", "convicted"), "
 data_nonEUCA[is.na(data_nonEUCA$ratio), "ratio"] = 0
 
 arrange_fig1(data_allregion, data_state_allregion, data_nonEUCA, data_state_nonEUCA, "linear", model_fml, wt_fml, "Community Arrests Only", do_sensitivity = F)
+ggsave("../figures/supplement/hit_rate_ca.png", width = 6.5, height = 6)
 ```
 
 ```{r, main_figs2, echo = F}
@@ -482,4 +483,5 @@ data_nonEUCA <- aggregate_data(trajectory, c("region", "window", "convicted"), "
 data_nonEUCA[is.na(data_nonEUCA$ratio), "ratio"] = 0
 
 arrange_fig1(data_allregion, data_state_allregion, data_nonEUCA, data_state_nonEUCA, "linear", model_fml, wt_fml, "All Arrest Types", do_sensitivity = F)
+ggsave("../figures/supplement/hit_rate_all_types.png", width = 6.5, height = 6)
 ```

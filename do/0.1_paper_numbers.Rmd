@@ -133,6 +133,7 @@ raw_arrests <- read_parquet("../data/raw/arrests-latest.parquet") %>%
          ) %>%
   select("ApprehensionDate","ApprehensionAOR",
          "ApprehensionMethod","ApprehensionCriminality","apprehension_state_filled_in",
+         "apprehension_state_original",
          "citizenship_country", "gender", "birth_year", "case_threat_level") %>%
   rename("apprehension_state" = "apprehension_state_filled_in")
 
@@ -286,6 +287,13 @@ raw_arrests <- raw_arrests %>%
   filter(!is.na(citizenship_region))
 
 print(paste0("Require valid region: ", nrow(raw_arrests)))
+
+
+processed_state <- read_csv("../data/processed/glm_trajectory_type_threatlevel_convicted_ACS_MPI_raw_state.csv")
+processed <- read_csv("../data/processed/glm_trajectory_type_threatlevel_convicted_ACS_MPI.csv")
+processed_dedup <- read_csv("../data/processed/glm_trajectory_type_threatlevel_convicted_ACS_MPI_no_duplicates.csv")
+print(paste0("Number missing raw state: ", sum(processed$n_arrests) - sum(processed_state$n_arrests)))
+print(paste0("Number duplicated: ", sum(processed$n_arrests) - sum(processed_dedup$n_arrests)))
 ```
 
 Figure out how many AORs mismatch their states

@@ -45,7 +45,7 @@ ASIA = c(
   'BAHRAIN','UNITED ARAB EMIRATES','OMAN','PALESTINE',
   # DDP-specific spellings:
   'CHINA, PEOPLES REPUBLIC OF','TURKIYE','KOREA','HONG KONG','MACAU','EAST TIMOR',
-  'PALESTINE BORN BEFORE 1948'
+  'PALESTINE BORN BEFORE 1948', 'KOREA, REP.', 'TÜRKIYE', 'CHINA, HONG KONG SAR', 'LAO PDR'
 )
 AFRICA = c(
   'NIGERIA','ETHIOPIA','EGYPT','KENYA','GHANA','SOMALIA','SUDAN','SOUTH SUDAN','SOUTH AFRICA',
@@ -67,7 +67,7 @@ EUCA = c(
   'KOSOVO','AUSTRALIA','NEW ZEALAND','FIJI','SAMOA','TONGA','PAPUA NEW GUINEA',
   # DDP-specific spellings:
   'BOSNIA-HERZEGOVINA','USSR','YUGOSLAVIA','SERBIA AND MONTENEGRO','CZECHOSLOVAKIA','ANDORRA',
-  'MONACO','MICRONESIA, FEDERATED STATES OF','MARSHALL ISLANDS','PALAU','FRENCH POLYNESIA'
+  'MONACO','MICRONESIA, FEDERATED STATES OF','MARSHALL ISLANDS','PALAU','FRENCH POLYNESIA', 'RUSSIAN FEDERATION'
 )
 
 
@@ -390,5 +390,25 @@ datasummary_df(
 ```
 
 ```{r}
-country_data <- read_csv("../data/raw/mpi_to_us_counts.csv")
+# country_data <- read_tsv("../data/raw/mpi_to_us_counts.csv", 
+#   locale = locale(encoding = "UTF-16")
+# )
+# country_data$`Select migrant country  (inverse)`
+# country_data <- country_data %>% 
+#   mutate(`Select migrant country  (inverse)` = toupper(`Select migrant country  (inverse)`))%>% 
+#   mutate(citizenship_region = unlist(lapply(`Select migrant country  (inverse)`, get_region))) %>% 
+#   select(`Select migrant country  (inverse)`, citizenship_region, Migrants_R)
+#  
+#   
+# country_data <- country_data %>% 
+#   arrange(citizenship_region, -Migrants_R) %>% 
+#   group_by(citizenship_region) %>% 
+#   slice_head(n = 5)
+# 
+# datasummary_df(
+#   country_data,
+#   output = "latex",
+#   title = "Top five countries of origin by proportion of arrests within region of origin.",
+#   fmt = NULL
+# )
 ```

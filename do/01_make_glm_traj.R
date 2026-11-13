@@ -137,12 +137,10 @@ arrests <- arrests %>%
   select(c(ApprehensionDate, ApprehensionMethod, 
            ApprehensionCriminality, case_threat_level,
            state_clean, aor_short, citizenship_country)) %>%
-  #mutate(felony = ifelse(!is.na(case_threat_level) & case_threat_level %in% c(1, 2), 1, 0 )) %>%
   mutate(threat_level = ifelse(!is.na(case_threat_level) & case_threat_level == 1, 1, 
                                ifelse(!is.na(case_threat_level) & case_threat_level == 2, 2, 0))) %>%
   mutate(citizenship_region = unlist(lapply(citizenship_country, get_region))) %>%
   mutate(method = unlist(lapply(ApprehensionMethod, get_method))) %>%
-  #mutate(alt_method = unlist(lapply(ApprehensionMethod, get_alt_method))) %>%
   mutate(convicted = ifelse(ApprehensionCriminality == "1 Convicted Criminal", 1, 0)) %>%
   select(-c(ApprehensionMethod, citizenship_country, ApprehensionCriminality, case_threat_level))
 

@@ -531,6 +531,8 @@ data_state_nonEUCA[is.na(data_state_nonEUCA$ratio),"ratio"] = 0
 
 ```{r}
 suppressMessages(arrange_fig1(data_allregion, data_state_allregion, data_nonEUCA, data_state_nonEUCA, "linear", model_fml, wt_fml, "Relative to whole population" ))
+ggsave("../figures/supplement/relative_rates.png", width = 6.5, height = 6)
+
 ```
 
 
@@ -646,6 +648,7 @@ data_state_nonEUCA[is.na(data_state_nonEUCA$ratio),"ratio"] = 0
 
 ```{r}
 suppressMessages(arrange_fig1(data_allregion, data_state_allregion, data_nonEUCA, data_state_nonEUCA, "linear", model_fml, wt_fml, "Relative to EUCA + Group of Interest" ))
+ggsave("../figures/supplement/relative_rates_EUCA.png", width = 6.5, height = 6)
 ```
 
 

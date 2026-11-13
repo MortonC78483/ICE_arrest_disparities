@@ -55,8 +55,8 @@ conv_method_state <- trajectory %>%
   group_by(window, region, state, conv_method, pop_MPI) %>%
   summarize(n_arrests = sum(n_arrests),
             ratio = sum(n_arrests)/sum(pop_MPI)*1000,
-            ratio_annualized = sum(n_arrests)/sum(pop_MPI)*1000*ifelse(window == -1, 365.25/n_days_pre, 365.25/n_days_post)) 
-
+            ratio_annualized = sum(n_arrests)/sum(pop_MPI)*1000*ifelse(window == 0, 60/days_post_period, 1)) 
+1 per 2 days means 3 in 6 days
 wt_fml <- as.formula("~ pop_MPI")
 model_fml <- as.formula(
   paste0("ratio_annualized ~ i(window, region, ref = -1, ref2 = 'EUCA') | region + window")
@@ -114,7 +114,7 @@ conv_method_state <- trajectory %>%
   group_by(window, region, state, conv_method, pop_MPI) %>%
   summarize(n_arrests = sum(n_arrests),
             ratio = sum(n_arrests)/sum(pop_MPI)*1000,
-            ratio_annualized = sum(n_arrests)/sum(pop_MPI)*1000*ifelse(window == -1, 365.25/n_days_pre, 365.25/n_days_post)) 
+            ratio_annualized = sum(n_arrests)/sum(pop_MPI)*1000*ifelse(window == 0, 60/days_post_period, 1)) 
   
 wt_fml <- as.formula("~ pop_MPI")
 model_fml <- as.formula(
