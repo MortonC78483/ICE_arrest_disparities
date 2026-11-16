@@ -353,30 +353,34 @@ k <- length(regions)
 states <- unique(data_state_region$state)
 n_states <- length(states)
 
-jack_matrix <- matrix(NA, nrow = n_states, ncol = k)
-colnames(jack_matrix) <- regions
+jack_matrix <- matrix(NA, nrow = n_states, ncol = k,
+                      dimnames = list(states, regions))
 main_est <- numeric(0)
 se_est <- numeric(0)
 
 for (cur_region in setdiff(unique(data_state_region$region), c("EUCA"))){
   data_filtered <- data_state_region %>% 
     filter(region %in% c(cur_region, "EUCA"))
-  
+  present_states <- intersect(states, unique(data_filtered$state))
+  if(length(present_states) != length(states)){
+    print("Lacking states for")
+    print(cur_region)
+  }
   mod <- feols(model_fml, data_filtered, weights = wt_fml, cluster = ~state)
   states <- unique(data_filtered$state)
   n_states <- length(states)
   mean_val <- mean(unname(coef(feols(model_fml, data = data_filtered, weights = wt_fml, cluster = ~state))))
   
-  jackknife_est_matrix <- rowMeans(t(sapply(states, function(dropped_state) {
+  jackknife_est_matrix <- sapply(states, function(dropped_state) {
     sub_data <- subset(data_filtered, state != dropped_state)
-    coef(feols(model_fml, data = sub_data, weights = wt_fml, cluster = ~state))
-  })))
+    mean(unname(coef(feols(model_fml, data = sub_data, weights = wt_fml, cluster = ~state))))
+  })
   
   var = sum((jackknife_est_matrix - mean_val)^2)*(n_states-1)/(n_states )
   se = sqrt(var)
   z = mean_val/se
   
-  jack_matrix[, cur_region] <- jackknife_est_matrix
+  jack_matrix[rownames(jack_matrix), cur_region] <- jackknife_est_matrix
   main_est[cur_region] <- mean_val
   se_est[cur_region] <- se
   
@@ -414,9 +418,11 @@ add_results <- add_results %>%
     ))
 
 add_figure_results <- add_figure_results %>% 
-  mutate(low = mean - se * critical_value,
-         high = mean + se*critical_value)
-add_results
+  mutate(
+    critical_value = ifelse(Region == "Non-EUCA", 1.96, critical_value),
+    low = mean - se*critical_value,
+    high = mean + se*critical_value
+  )
 
 wald_test(add_figure_results$mean[2:6], vcov = vcov)
 ```
@@ -441,10 +447,14 @@ mod <- fepois(pois_model_fml, data_state_nonEUCA, offset = offset_fml, cluster =
 states <- unique(data_state_nonEUCA$state)
 n_states <- length(states)
 mean_val <- mean((unname(coef(fepois(pois_model_fml, data = data_state_nonEUCA, offset = offset_fml, cluster = ~state)))))
-jackknife_est_matrix <- rowMeans((t(sapply(states, function(dropped_state) {
+
+
+jackknife_est_matrix <- rowMeans(t(sapply(states, function(dropped_state) {
   sub_data <- subset(data_state_nonEUCA, state != dropped_state)
   coef(fepois(pois_model_fml, data = sub_data, offset = offset_fml, cluster = ~state))
-}))))
+})))
+
+
 var = sum((jackknife_est_matrix - mean_val)^2)*(n_states-1)/(n_states )
 se = sqrt(var)
 z = mean_val/se
@@ -471,27 +481,34 @@ k <- length(regions)
 states <- unique(data_state_region$state)
 n_states <- length(states)
 
-jack_matrix <- matrix(NA, nrow = n_states, ncol = k)
+jack_matrix <- matrix(NA, nrow = n_states, ncol = k,
+                      dimnames = list(states, regions))
 colnames(jack_matrix) <- regions
 main_est <- numeric(0)
 se_est <- numeric(0)
 
+
 for (cur_region in setdiff(unique(data_state_region$region), c("EUCA"))){
   data_filtered <- data_state_region %>% 
     filter(region %in% c(cur_region, "EUCA"))
+  present_states <- intersect(states, unique(data_filtered$state))
+  if(length(present_states) != length(states)){
+    print("Lacking states for")
+    print(cur_region)
+  }
   mod <- fepois(pois_model_fml, data_filtered, offset = offset_fml, cluster = ~state)
   states <- unique(data_filtered$state)
   n_states <- length(states)
   mean_val <- mean((unname(coef(fepois(pois_model_fml, data = data_filtered, offset = offset_fml, cluster = ~state)))))
-  jackknife_est_matrix <- rowMeans((t(sapply(states, function(dropped_state) {
+  jackknife_est_matrix <- sapply(states, function(dropped_state) {
     sub_data <- subset(data_filtered, state != dropped_state)
-    coef(fepois(pois_model_fml, data = sub_data, offset = offset_fml, cluster = ~state))
-  }))))
+    mean(unname(coef(fepois(pois_model_fml, data = sub_data, offset = offset_fml, cluster = ~state))))
+  })
   var = sum((jackknife_est_matrix - mean_val)^2)*(n_states-1)/(n_states )
   se = sqrt(var)
   z = mean_val/se
   
-  jack_matrix[, cur_region] <- jackknife_est_matrix
+  jack_matrix[rownames(jack_matrix), cur_region] <- jackknife_est_matrix
   main_est[cur_region] <- mean_val
   se_est[cur_region] <- se
   
@@ -528,8 +545,11 @@ mult_results <- mult_results %>%
     ))
     
 mult_figure_results <- mult_figure_results %>% 
-  mutate(low = mean - se*critical_value,
-         high = mean + se*critical_value)
+  mutate(
+    critical_value = ifelse(Region == "Non-EUCA", 1.96, critical_value),
+    low = mean - se*critical_value,
+    high = mean + se*critical_value
+  )
 
 wald_test(mult_figure_results$mean[2:6], vcov = vcov)
 ```

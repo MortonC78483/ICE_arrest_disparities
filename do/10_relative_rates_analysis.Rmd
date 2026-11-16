@@ -1,5 +1,5 @@
 ---
-title: "10_hit_rate_analysis"
+title: "11_relative_rates_analysis"
 author: "Claire Morton"
 date: "2026-10-14"
 output:
@@ -7,7 +7,6 @@ output:
   html_document: default
 ---
 
-Implement a hit rate analysis based on reviewer feedback
 
 ```{r setup, include=FALSE}
 knitr::opts_chunk$set(echo = TRUE)
@@ -48,13 +47,13 @@ aggregate_data <- function(data,
   # aggregate regions if requested
   if(agg_noneuca){
     data_pop <- data_pop %>% 
-      mutate(region = ifelse(region == "EUCA", "EUCA", "nonEUCA")) %>%
+      mutate(region = ifelse(region == "EUCA", "EUCA", "Non-EUCA")) %>%
       group_by(pick(-c(n_arrests, pop))) %>%
       summarize(n_arrests = sum(n_arrests),
                 pop = sum(pop))
     
     raw_pop <- raw_pop %>% 
-      mutate(region = ifelse(region == "EUCA", "EUCA", "nonEUCA")) %>%
+      mutate(region = ifelse(region == "EUCA", "EUCA", "Non-EUCA")) %>%
       group_by(state, region) %>%
       summarize(pop = sum(pop), .groups = "drop")
   }
@@ -208,7 +207,7 @@ event_study_plot <- function(estimates,
     geom_errorbar(aes(ymin = lower, ymax = upper), position = position_dodge(0.3)) +
     geom_line(linewidth = 0.8, position = position_dodge(0.3)) +
     labs(x = "Window",
-         y = "Difference in proportion non-EUCA arrests\nrelative to unauthorized population share and window -1") +
+         y = "Difference in proportion non-EUCA\narrests relative to unauthorized\npopulation share and window -1") +
     scale_x_continuous(breaks = seq(min(estimates$window), max(estimates$window), by = 1)) +
     theme_classic()+
     scale_color_manual(values = pal)
@@ -304,41 +303,18 @@ arrange_fig1 <- function(data_allregion, data_state_allregion, data_nonEUCA, dat
   return(fig)
 }
 
-arrange_fig1 <- function(data_allregion, data_state_allregion, data_nonEUCA, data_state_nonEUCA, 
+arrange_fig1 <- function(data_nonEUCA, data_state_nonEUCA, 
                          type = c("poisson", "linear"), model_fml, extra_fml, title, do_se = T, do_sensitivity = F){
   
   type <- match.arg(type)
-  
-  plt.part_a <- plot_predictions(data = data_allregion, 
-                                 #model_fml = model_fml, 
-                                 pal = pal, baseline = ifelse(type == "poisson", 1, 0), type = type)
-  plt.part_b <- event_study_plot(fit_diffindiff(data_state_allregion, model_fml, extra_fml, type, do_se = do_se, do_sensitivity = F), pal = pal, baseline = ifelse(type == "poisson", 1, 0))
+
   plt.part_c <- plot_predictions(data = data_nonEUCA, 
-                                 #model_fml = model_fml, 
                                  pal = pal_euca, baseline = ifelse(type == "poisson", 1, 0), type = type)
   plt.part_d <- event_study_plot(fit_diffindiff(data_state_nonEUCA, model_fml, extra_fml, type, do_se = do_se, do_sensitivity = do_sensitivity), pal = pal_euca, baseline = ifelse(type == "poisson", 1, 0))
 
-  ylim_ac <- range(c(layer_scales(plt.part_a)$y$range$range, layer_scales(plt.part_c)$y$range$range), na.rm = TRUE)
-  ylim_bd <- range(c(layer_scales(plt.part_b)$y$range$range, layer_scales(plt.part_d)$y$range$range), na.rm = TRUE)
-
-  c_breaks_filtered <-c("Africa", "Asia", "Caribbean", "MCA", "SA")
-
   custom_labels <- c("EUCA", "Non-EUCA")
   
-  tag_style_ac <- theme(
-    plot.title.position = "panel",
-    plot.tag.position = c(0.08, 0.98),
-    plot.tag = element_text(size = 12, face = "bold", hjust = 0)
-  )
-  
-  tag_style_bd <- theme(
-    plot.title.position = "panel",
-    plot.tag.position = c(0.15, 0.98), 
-    plot.tag = element_text(size = 12, face = "bold", hjust = 0)
-  )
-  
   plt.part_c_clean <- plt.part_c + 
-    coord_cartesian(ylim = ylim_ac) +
     labs(color = "") +
     scale_color_manual(
       values = pal_euca, 
@@ -348,34 +324,16 @@ arrange_fig1 <- function(data_allregion, data_state_allregion, data_nonEUCA, dat
           axis.text.x  = element_blank(), 
           axis.ticks.x = element_blank(),
           legend.position = "bottom") + 
-    labs(tag = "a")+ 
-  tag_style_ac
+    labs(tag = "a")
   
   plt.part_d_clean <- plt.part_d + 
-    coord_cartesian(ylim = ylim_bd) +
     theme(axis.title.x = element_blank(), 
           axis.text.x  = element_blank(), 
           axis.ticks.x = element_blank(),
           legend.position = "none") + 
-    labs(tag = "b")+ 
-  tag_style_bd
+    labs(tag = "b")
   
-  plt.part_a_clean <- plt.part_a + 
-    coord_cartesian(ylim = ylim_ac) +
-    labs(color = "") +
-    scale_color_manual(values = pal,
-                       breaks = c_breaks_filtered) +
-    theme(legend.position = "bottom") + 
-    labs(tag = "c")+ 
-  tag_style_ac
-  
-  plt.part_b_clean <- plt.part_b + 
-    coord_cartesian(ylim = ylim_bd) +
-    theme(legend.position = "none") + 
-    labs(tag = "d")+ 
-  tag_style_bd
-  
-  fig <- plt.part_c_clean + plt.part_d_clean + plt.part_a_clean + plt.part_b_clean + 
+  fig <- plt.part_c_clean + plt.part_d_clean +
     plot_layout(
       ncol = 2, 
       guides = "collect", 
@@ -396,10 +354,7 @@ arrange_fig1 <- function(data_allregion, data_state_allregion, data_nonEUCA, dat
 
 ```{r color_palette, include = F}
 #### COLOR PALETTE ####
-all_regions <- c("Africa", "Asia", "Caribbean", "EUCA", "MCA", "SA")
-other_regions <- setdiff(all_regions, "EUCA")
-pal <- c(setNames(scales::brewer_pal(palette = "Dark2")(length(other_regions)), other_regions))
-pal_euca <- c("nonEUCA" = "darkblue")
+pal_euca <- c("Non-EUCA" = "#0057B8", "nonEUCA" = "#0057B8")
 ```
 
 ```{r}
@@ -427,11 +382,11 @@ data_nonEUCA <- aggregate_data(trajectory, c("region", "window"), "pop_MPI", agg
   select(-c(ratio))
 data_nonEUCA_tomerge <- data_nonEUCA %>% 
   pivot_wider(id_cols = c(window), names_from = region, values_from = c(n_arrests, pop)) %>% 
-  mutate(arrests_ratio = n_arrests_nonEUCA/(n_arrests_EUCA + n_arrests_nonEUCA),
-         pop_ratio = pop_nonEUCA/(pop_EUCA+pop_nonEUCA)) %>% 
+  mutate(arrests_ratio = `n_arrests_Non-EUCA`/(n_arrests_EUCA + `n_arrests_Non-EUCA`),
+         pop_ratio = `pop_Non-EUCA`/(pop_EUCA+`pop_Non-EUCA`)) %>% 
   mutate(ratio = arrests_ratio - pop_ratio, 
-         total_arrests = n_arrests_EUCA + n_arrests_nonEUCA, 
-         total_pop = pop_EUCA + pop_nonEUCA)
+         total_arrests = n_arrests_EUCA + `n_arrests_Non-EUCA`, 
+         total_pop = pop_EUCA + `pop_Non-EUCA`)
 data_nonEUCA <- merge(data_nonEUCA, data_nonEUCA_tomerge)%>%
   select(window, total_arrests, total_pop, arrests_ratio, pop_ratio) %>% 
   unique() %>% 
@@ -444,10 +399,7 @@ data_nonEUCA <- merge(data_nonEUCA, data_nonEUCA_tomerge)%>%
     names_to = c("type_region", ".value"),
     names_sep = "_"
   ) %>%
-  mutate(type_region = paste0(type_region, "_nonEUCA"))
-
-
-
+  mutate(type_region = paste0(type_region, "_Non-EUCA"))
 
 data <- aggregate_data(trajectory, c("region", "window"), "pop_MPI", agg_noneuca = FALSE)
 euca_data <- data %>% 
@@ -464,18 +416,6 @@ data_combined <- data %>%
     arrests_total = euca_arrests,
     pop_total     = euca_pop
   )
-data_allregion <- data_combined %>%
-  select(window, region, arrests_ratio, pop_ratio, arrests_total, pop_total) %>%
-  pivot_longer(
-    cols = c(arrests_ratio, pop_ratio, arrests_total, pop_total),
-    names_to = c("type_region", ".value"),
-    names_sep = "_"
-  ) %>% 
-  mutate(type_region = paste0(type_region, '_', region)) %>% 
-  select(-region)
-data_allregion[is.na(data_allregion$ratio), "ratio"] = 0
-
-
 
 data_state <- aggregate_data(trajectory, c("region", "window", "state"), "pop_MPI", agg_noneuca = FALSE)
 euca_data <- data_state %>% 
@@ -492,26 +432,15 @@ data_state_combined <- data_state %>%
     arrests_total = euca_arrests,
     pop_total     = euca_pop
   )
-data_state_allregion <- data_state_combined %>%
-  select(window, state, region, arrests_ratio, pop_ratio, arrests_total, pop_total) %>%
-  pivot_longer(
-    cols = c(arrests_ratio, pop_ratio, arrests_total, pop_total),
-    names_to = c("type_region", ".value"),
-    names_sep = "_"
-  ) %>% 
-  mutate(type_region = paste0(type_region, '_', region)) %>% 
-  select(-region)
-data_state_allregion[is.na(data_state_allregion$ratio), "ratio"] = 0
-
 
 data_state_nonEUCA <- aggregate_data(trajectory, c("region", "window", "state"), "pop_MPI", agg_noneuca = TRUE) %>% select(-c(ratio)) 
 data_state_nonEUCA_tomerge <- data_state_nonEUCA %>% 
   pivot_wider(id_cols = c(window, state), names_from = region, values_from = c(n_arrests, pop)) %>% 
-  mutate(arrests_ratio = n_arrests_nonEUCA/(n_arrests_EUCA + n_arrests_nonEUCA),
-         pop_ratio = pop_nonEUCA/(pop_EUCA+pop_nonEUCA),
-         pop = pop_EUCA + pop_nonEUCA,
-         total_arrests = n_arrests_EUCA + n_arrests_nonEUCA, 
-         total_pop = pop_EUCA + pop_nonEUCA)
+  mutate(arrests_ratio = `n_arrests_Non-EUCA`/(n_arrests_EUCA + `n_arrests_Non-EUCA`),
+         pop_ratio = `pop_Non-EUCA`/(pop_EUCA+`pop_Non-EUCA`),
+         pop = pop_EUCA + `pop_Non-EUCA`,
+         total_arrests = n_arrests_EUCA +`n_arrests_Non-EUCA`, 
+         total_pop = pop_EUCA + `pop_Non-EUCA`)
 data_state_nonEUCA <- data_state_nonEUCA %>% select(-pop)
 data_state_nonEUCA <- merge(data_state_nonEUCA, data_state_nonEUCA_tomerge) %>%
   select(window, state, total_arrests, total_pop, arrests_ratio, pop_ratio) %>% 
@@ -530,125 +459,7 @@ data_state_nonEUCA[is.na(data_state_nonEUCA$ratio),"ratio"] = 0
 ```
 
 ```{r}
-suppressMessages(arrange_fig1(data_allregion, data_state_allregion, data_nonEUCA, data_state_nonEUCA, "linear", model_fml, wt_fml, "Relative to whole population" ))
-ggsave("../figures/supplement/relative_rates.png", width = 6.5, height = 6)
+suppressMessages(arrange_fig1(data_nonEUCA, data_state_nonEUCA, "linear", model_fml, wt_fml, ""))
 
+ggsave("../figures/supplement/relative_rates.pdf", width = 6.5, height = 4)
 ```
-
-
-
-```{r}
-data_nonEUCA <- aggregate_data(trajectory, c("region", "window"), "pop_MPI", agg_noneuca = TRUE) %>% 
-  select(-c(ratio))
-data_nonEUCA_tomerge <- data_nonEUCA %>% 
-  pivot_wider(id_cols = c(window), names_from = region, values_from = c(n_arrests, pop)) %>% 
-  mutate(arrests_ratio = n_arrests_nonEUCA/(n_arrests_EUCA + n_arrests_nonEUCA),
-         pop_ratio = pop_nonEUCA/(pop_EUCA+pop_nonEUCA)) %>% 
-  mutate(ratio = arrests_ratio - pop_ratio, 
-         total_arrests = n_arrests_EUCA + n_arrests_nonEUCA, 
-         total_pop = pop_EUCA + pop_nonEUCA)
-data_nonEUCA <- merge(data_nonEUCA, data_nonEUCA_tomerge)%>%
-  select(window, total_arrests, total_pop, arrests_ratio, pop_ratio) %>% 
-  unique() %>% 
-  rename(
-    arrests_total = total_arrests,
-    pop_total = total_pop
-  ) %>%
-  pivot_longer(
-    cols = c(arrests_ratio, pop_ratio, arrests_total, pop_total),
-    names_to = c("type_region", ".value"),
-    names_sep = "_"
-  ) %>%
-  mutate(type_region = paste0(type_region, "_nonEUCA"))
-
-
-
-
-data <- aggregate_data(trajectory, c("region", "window"), "pop_MPI", agg_noneuca = FALSE)
-euca_data <- data %>% 
-  filter(region == "EUCA") %>% 
-  group_by(window) %>%
-  summarize(euca_arrests = sum(n_arrests), euca_pop = sum(pop)) %>% 
-  ungroup()
-data_combined <- data %>% 
-  filter(region != "EUCA") %>% 
-  left_join(euca_data, by = c("window")) %>% 
-  rename(arrests = n_arrests) %>% 
-  mutate(
-    arrests_ratio = arrests / (euca_arrests + arrests),
-    pop_ratio     = pop / (euca_pop + pop),
-    arrests_total = euca_arrests + arrests,
-    pop_total     = euca_pop + pop
-  )
-data_allregion <- data_combined %>%
-  select(window, region, arrests_ratio, pop_ratio, arrests_total, pop_total) %>%
-  pivot_longer(
-    cols = c(arrests_ratio, pop_ratio, arrests_total, pop_total),
-    names_to = c("type_region", ".value"),
-    names_sep = "_"
-  ) %>% 
-  mutate(type_region = paste0(type_region, '_', region)) %>% 
-  select(-region)
-data_allregion[is.na(data_allregion$ratio), "ratio"] = 0
-
-
-
-data_state <- aggregate_data(trajectory, c("region", "window", "state"), "pop_MPI", agg_noneuca = FALSE)
-euca_data <- data_state %>% 
-  group_by(window, state) %>%
-  filter(region == "EUCA") %>% 
-  summarize(euca_arrests = sum(n_arrests), euca_pop = sum(pop)) %>% 
-  ungroup()
-data_state_combined <- data_state %>% 
-  filter(region != "EUCA") %>% 
-  left_join(euca_data, by = c("window", "state")) %>% 
-  rename(arrests = n_arrests) %>% 
-  mutate(
-    arrests_ratio = arrests / (euca_arrests + arrests),
-    pop_ratio     = pop / (euca_pop + pop),
-    arrests_total = euca_arrests + arrests,
-    pop_total     = euca_pop + pop
-  )
-data_state_allregion <- data_state_combined %>%
-  select(window, state, region, arrests_ratio, pop_ratio, arrests_total, pop_total) %>%
-  pivot_longer(
-    cols = c(arrests_ratio, pop_ratio, arrests_total, pop_total),
-    names_to = c("type_region", ".value"),
-    names_sep = "_"
-  ) %>% 
-  mutate(type_region = paste0(type_region, '_', region)) %>% 
-  select(-region)
-data_state_allregion[is.na(data_state_allregion$ratio), "ratio"] = 0
-
-
-data_state_nonEUCA <- aggregate_data(trajectory, c("region", "window", "state"), "pop_MPI", agg_noneuca = TRUE) %>% select(-c(ratio)) 
-data_state_nonEUCA_tomerge <- data_state_nonEUCA %>% 
-  pivot_wider(id_cols = c(window, state), names_from = region, values_from = c(n_arrests, pop)) %>% 
-  mutate(arrests_ratio = n_arrests_nonEUCA/(n_arrests_EUCA + n_arrests_nonEUCA),
-         pop_ratio = pop_nonEUCA/(pop_EUCA+pop_nonEUCA),
-         pop = pop_EUCA + pop_nonEUCA,
-         total_arrests = n_arrests_EUCA + n_arrests_nonEUCA, 
-         total_pop = pop_EUCA + pop_nonEUCA)
-data_state_nonEUCA <- data_state_nonEUCA %>% select(-pop)
-data_state_nonEUCA <- merge(data_state_nonEUCA, data_state_nonEUCA_tomerge) %>%
-  select(window, state, total_arrests, total_pop, arrests_ratio, pop_ratio) %>% 
-  unique() %>% 
-  rename(
-    arrests_total = total_arrests,
-    pop_total = total_pop
-  ) %>%
-  pivot_longer(
-    cols = c(arrests_ratio, pop_ratio, arrests_total, pop_total),
-    names_to = c("type_region", ".value"),
-    names_sep = "_"
-  ) %>%
-  mutate(type_region = paste0(type_region, "_nonEUCA"))
-data_state_nonEUCA[is.na(data_state_nonEUCA$ratio),"ratio"] = 0
-```
-
-```{r}
-suppressMessages(arrange_fig1(data_allregion, data_state_allregion, data_nonEUCA, data_state_nonEUCA, "linear", model_fml, wt_fml, "Relative to EUCA + Group of Interest" ))
-ggsave("../figures/supplement/relative_rates_EUCA.png", width = 6.5, height = 6)
-```
-
-

@@ -5,10 +5,8 @@ date: "2026-10-14"
 output:
   pdf_document: default
   html_document: default
+  word_document: default
 ---
-
-
-Second, calculate the “hit rate” across EUCA and non-EUCA groups and take their difference. You can use the conviction rate here. For example, acquire these two quantities nationally or at the AOR/state-level for your time periods: Pr(Convicted | Arrest, EUCA), Pr(Convicted | Arrest, non-EUCA). Then, take the following difference: Pr(Convicted | Arrest, non-EUCA) - Pr(Convicted | Arrest, EUCA). If the Trump administration is increasingly arresting non-EUCA (relative to EUCA) undocumented immigrants on superfluous, non-neutral, grounds (that is, not being a convicted criminal), then we should expect the difference to be more negative after his inauguration.
 
 ```{r setup, include=FALSE}
 knitr::opts_chunk$set(echo = TRUE)
@@ -49,13 +47,13 @@ aggregate_data <- function(data,
   # aggregate regions if requested
   if(agg_noneuca){
     data_pop <- data_pop %>% 
-      mutate(region = ifelse(region == "EUCA", "EUCA", "nonEUCA")) %>%
+      mutate(region = ifelse(region == "EUCA", "EUCA", "Non-EUCA")) %>%
       group_by(pick(-c(n_arrests, pop))) %>%
       summarize(n_arrests = sum(n_arrests),
                 pop = sum(pop))
     
     raw_pop <- raw_pop %>% 
-      mutate(region = ifelse(region == "EUCA", "EUCA", "nonEUCA")) %>%
+      mutate(region = ifelse(region == "EUCA", "EUCA", "Non-EUCA")) %>%
       group_by(state, region) %>%
       summarize(pop = sum(pop), .groups = "drop")
   }
@@ -289,87 +287,104 @@ fit_diffindiff <- function(data, model_fml, extra_fml, model_type = c("linear", 
 }
 
 
-arrange_fig1 <- function(data_allregion, data_state_allregion, data_nonEUCA, data_state_nonEUCA, 
-                         type = c("poisson", "linear"), model_fml, extra_fml, title, do_se = T, do_sensitivity = F){
+arrange_fig1 <- function(data_nonEUCA, data_state_nonEUCA,
+                         data_nonEUCA_ca, data_state_nonEUCA_ca, 
+                         data_nonEUCA_lea, data_state_nonEUCA_lea, 
+                         type = c("poisson", "linear"), model_fml, extra_fml, do_se = T, do_sensitivity = F){
   
   type <- match.arg(type)
   
-  plt.part_a <- plot_predictions(data = data_allregion, 
-                                 #model_fml = model_fml, 
-                                 pal = pal, baseline = ifelse(type == "poisson", 1, 0), type = type)
-  plt.part_b <- event_study_plot(fit_diffindiff(data_state_allregion, model_fml, extra_fml, type, do_se = do_se, do_sensitivity = F), pal = pal, baseline = ifelse(type == "poisson", 1, 0))
-  plt.part_c <- plot_predictions(data = data_nonEUCA, 
-                                 #model_fml = model_fml, 
+  plt.part_a <- plot_predictions(data = data_nonEUCA, 
                                  pal = pal_euca, baseline = ifelse(type == "poisson", 1, 0), type = type)
-  plt.part_d <- event_study_plot(fit_diffindiff(data_state_nonEUCA, model_fml, extra_fml, type, do_se = do_se, do_sensitivity = do_sensitivity), pal = pal_euca, baseline = ifelse(type == "poisson", 1, 0))
-
-  ylim_ac <- range(c(layer_scales(plt.part_a)$y$range$range, layer_scales(plt.part_c)$y$range$range), na.rm = TRUE)
-  ylim_bd <- range(c(layer_scales(plt.part_b)$y$range$range, layer_scales(plt.part_d)$y$range$range), na.rm = TRUE)
-
+  plt.part_b <- event_study_plot(fit_diffindiff(data_state_nonEUCA, model_fml, extra_fml, type, do_se = do_se, do_sensitivity = F), pal = pal_euca, baseline = ifelse(type == "poisson", 1, 0))
+  
+  plt.part_c <- plot_predictions(data = data_nonEUCA_ca, 
+                                 pal = pal_euca, baseline = ifelse(type == "poisson", 1, 0), type = type)
+  plt.part_d <- event_study_plot(fit_diffindiff(data_state_nonEUCA_ca, model_fml, extra_fml, type, do_se = do_se, do_sensitivity = F), pal = pal_euca, baseline = ifelse(type == "poisson", 1, 0))
+  
+  plt.part_e <- plot_predictions(data = data_nonEUCA_lea, 
+                                 pal = pal_euca, baseline = ifelse(type == "poisson", 1, 0), type = type)
+  plt.part_f <- event_study_plot(fit_diffindiff(data_state_nonEUCA_lea, model_fml, extra_fml, type, do_se = do_se, do_sensitivity = F), pal = pal_euca, baseline = ifelse(type == "poisson", 1, 0))
+  
   color_var_name <- as.character(plt.part_a$mapping$colour[[2]]) # Extracts the column name used for color
-  c_categories <- unique(data_allregion[[color_var_name]])
-  c_breaks_filtered <- setdiff(c_categories, "EUCA")
 
   custom_labels <- c("EUCA", "Non-EUCA")
   
-  tag_style_ac <- theme(
+  tag_style_a <- theme(
     plot.title.position = "panel",
     plot.tag.position = c(0.08, 0.98),
     plot.tag = element_text(size = 12, face = "bold", hjust = 0)
   )
   
-  tag_style_bd <- theme(
+  tag_style_b <- theme(
     plot.title.position = "panel",
     plot.tag.position = c(0.15, 0.98), 
     plot.tag = element_text(size = 12, face = "bold", hjust = 0)
   )
   
-  plt.part_c_clean <- plt.part_c + 
-    coord_cartesian(ylim = ylim_ac) +
-    labs(color = "") +
-    scale_color_manual(
-      values = pal_euca, 
-      labels = custom_labels
-    ) +
-    theme(axis.title.x = element_blank(), 
-          axis.text.x  = element_blank(), 
-          axis.ticks.x = element_blank(),
-          legend.position = "bottom") + 
-    labs(tag = "a")+ 
-  tag_style_ac
-  
-  plt.part_d_clean <- plt.part_d + 
-    coord_cartesian(ylim = ylim_bd) +
-    theme(axis.title.x = element_blank(), 
-          axis.text.x  = element_blank(), 
-          axis.ticks.x = element_blank(),
-          legend.position = "none") + 
-    labs(tag = "b")+ 
-  tag_style_bd
-  
   plt.part_a_clean <- plt.part_a + 
-    coord_cartesian(ylim = ylim_ac) +
     labs(color = "") +
-    scale_color_manual(values = pal,
-                       breaks = c_breaks_filtered) +
+    scale_color_manual(values = pal_euca) +
+    theme(legend.position = "bottom") + 
+    labs(tag = "a")+ 
+  tag_style_a
+  
+  plt.part_b_clean <- plt.part_b +
+    theme(legend.position = "none") + 
+    labs(tag = "b")+ 
+  tag_style_b
+  
+  plt.part_c_clean <- plt.part_c + 
+    labs(color = "") +
+    scale_color_manual(values = pal_euca) +
     theme(legend.position = "bottom") + 
     labs(tag = "c")+ 
-  tag_style_ac
+  tag_style_a
   
-  plt.part_b_clean <- plt.part_b + 
-    coord_cartesian(ylim = ylim_bd) +
+  plt.part_d_clean <- plt.part_d +
     theme(legend.position = "none") + 
     labs(tag = "d")+ 
-  tag_style_bd
+  tag_style_b
   
-  fig <- plt.part_c_clean + plt.part_d_clean + plt.part_a_clean + plt.part_b_clean + 
+  plt.part_e_clean <- plt.part_e + 
+    labs(color = "") +
+    scale_color_manual(values = pal_euca) +
+    theme(legend.position = "bottom") + 
+    labs(tag = "e")+ 
+  tag_style_a
+  
+  plt.part_f_clean <- plt.part_f +
+    theme(legend.position = "none") + 
+    labs(tag = "f")+ 
+  tag_style_b
+  
+  make_row_header <- function(label_text) {
+    wrap_elements(
+      panel = grid::textGrob(label_text, gp = grid::gpar(fontsize = 12, fontface = "bold"))
+    )
+  }
+  layout_design <- "
+    AA
+    BC
+    DD
+    EF
+    GG
+    HI
+  "
+  
+  fig <- make_row_header("All Arrests") +
+        plt.part_a_clean + plt.part_b_clean +
+        make_row_header("Community Arrests") +
+        plt.part_c_clean + plt.part_d_clean +
+        make_row_header("Law Enforcement Assisted Arrests") +
+        plt.part_e_clean + plt.part_f_clean +
     plot_layout(
-      ncol = 2, 
-      guides = "collect", 
+      design = layout_design,
+      heights = c(0.15, 1, 0.15, 1, 0.15, 1),
+      guides = "collect",
       axis_titles = "collect"
     ) +
     plot_annotation(
-      title = title,
       theme = theme(
         plot.title = element_text(size = 14, face = "bold", hjust = 0.5),
         legend.position = "bottom"
@@ -383,12 +398,7 @@ arrange_fig1 <- function(data_allregion, data_state_allregion, data_nonEUCA, dat
 
 ```{r color_palette, include = F}
 #### COLOR PALETTE ####
-all_regions <- c("Africa", "Asia", "Caribbean", "EUCA", "MCA", "SA")
-other_regions <- setdiff(all_regions, "EUCA")
-pal <- c("EUCA" = "darkgrey", 
-         setNames(scales::brewer_pal(palette = "Dark2")(length(other_regions)), other_regions))
-
-pal_euca <- c("EUCA" = "darkgrey", "nonEUCA" = "darkblue")
+pal_euca <- c("EUCA" = "darkgrey", "Non-EUCA" = "#0057B8")
 ```
 
 ## Figures
@@ -406,9 +416,7 @@ pois_model_fml <- as.formula(
 offset_fml <- as.formula("~log_pop")
 ```
 
-Pr(Convicted | Arrest, non-EUCA) - Pr(Convicted | Arrest, EUCA)
 
-number convicted who were non-EUCA / number non-EUCA
 ```{r, main_figs, echo = F}
 trajectory <- read_csv("../data/processed/glm_trajectory_type_threatlevel_convicted_ACS_MPI.csv") %>%
   mutate(region = ifelse(region == "AFRICA", "Africa",
@@ -416,36 +424,39 @@ trajectory <- read_csv("../data/processed/glm_trajectory_type_threatlevel_convic
                                 ifelse(region == "CARIBBEAN", "Caribbean", region)))) %>% 
   filter(method == "CA")
 
-data_state_allregion <- aggregate_data(trajectory, c("region", "window", "state", "convicted"), "pop_MPI", agg_noneuca = FALSE) %>%
+data_state_nonEUCA_ca <- aggregate_data(trajectory, c("region", "window", "state", "convicted"), "pop_MPI", agg_noneuca = TRUE) %>% 
   group_by(window, region, state) %>% 
   mutate(total_arrests = sum(n_arrests),
          ratio = n_arrests/total_arrests) %>%
-  filter(convicted == 1)
-data_state_allregion[is.na(data_state_allregion$ratio), "ratio"] = 0
+  filter(convicted == 1) 
+data_state_nonEUCA_ca[is.na(data_state_nonEUCA_ca$ratio), "ratio"] = 0
 
-data_state_nonEUCA <- aggregate_data(trajectory, c("region", "window", "state", "convicted"), "pop_MPI", agg_noneuca = TRUE) %>% 
-  group_by(window, region, state) %>% 
-  mutate(total_arrests = sum(n_arrests),
-         ratio = n_arrests/total_arrests) %>%
-  filter(convicted == 1)
-data_state_nonEUCA[is.na(data_state_nonEUCA$ratio), "ratio"] = 0
-
-data_allregion <- aggregate_data(trajectory, c("region", "window", "convicted"), "pop_MPI", agg_noneuca = FALSE) %>% 
+data_nonEUCA_ca <- aggregate_data(trajectory, c("region", "window", "convicted"), "pop_MPI", agg_noneuca = TRUE) %>% 
   group_by(window, region) %>% 
   mutate(total_arrests = sum(n_arrests),
          ratio = n_arrests/total_arrests) %>%
   filter(convicted == 1)
-data_allregion[is.na(data_allregion$ratio), "ratio"] = 0
+data_nonEUCA_ca[is.na(data_nonEUCA_ca$ratio), "ratio"] = 0
 
-data_nonEUCA <- aggregate_data(trajectory, c("region", "window", "convicted"), "pop_MPI", agg_noneuca = TRUE) %>% 
+trajectory <- read_csv("../data/processed/glm_trajectory_type_threatlevel_convicted_ACS_MPI.csv") %>%
+  mutate(region = ifelse(region == "AFRICA", "Africa",
+                         ifelse(region == "ASIA", "Asia",
+                                ifelse(region == "CARIBBEAN", "Caribbean", region)))) %>% 
+  filter(method == "LEA")
+
+data_state_nonEUCA_lea <- aggregate_data(trajectory, c("region", "window", "state", "convicted"), "pop_MPI", agg_noneuca = TRUE) %>% 
+  group_by(window, region, state) %>% 
+  mutate(total_arrests = sum(n_arrests),
+         ratio = n_arrests/total_arrests) %>%
+  filter(convicted == 1) 
+data_state_nonEUCA_lea[is.na(data_state_nonEUCA_lea$ratio), "ratio"] = 0
+
+data_nonEUCA_lea <- aggregate_data(trajectory, c("region", "window", "convicted"), "pop_MPI", agg_noneuca = TRUE) %>% 
   group_by(window, region) %>% 
   mutate(total_arrests = sum(n_arrests),
          ratio = n_arrests/total_arrests) %>%
   filter(convicted == 1)
-data_nonEUCA[is.na(data_nonEUCA$ratio), "ratio"] = 0
-
-arrange_fig1(data_allregion, data_state_allregion, data_nonEUCA, data_state_nonEUCA, "linear", model_fml, wt_fml, "Community Arrests Only", do_sensitivity = F)
-ggsave("../figures/supplement/hit_rate_ca.png", width = 6.5, height = 6)
+data_nonEUCA_lea[is.na(data_nonEUCA_lea$ratio), "ratio"] = 0
 ```
 
 ```{r, main_figs2, echo = F}
@@ -454,26 +465,12 @@ trajectory <- read_csv("../data/processed/glm_trajectory_type_threatlevel_convic
                          ifelse(region == "ASIA", "Asia",
                                 ifelse(region == "CARIBBEAN", "Caribbean", region))))
 
-data_state_allregion <- aggregate_data(trajectory, c("region", "window", "state", "convicted"), "pop_MPI", agg_noneuca = FALSE) %>%
-  group_by(window, region, state) %>% 
-  mutate(total_arrests = sum(n_arrests),
-         ratio = n_arrests/total_arrests) %>%
-  filter(convicted == 1)
-data_state_allregion[is.na(data_state_allregion$ratio), "ratio"] = 0
-
 data_state_nonEUCA <- aggregate_data(trajectory, c("region", "window", "state", "convicted"), "pop_MPI", agg_noneuca = TRUE) %>% 
   group_by(window, region, state) %>% 
   mutate(total_arrests = sum(n_arrests),
          ratio = n_arrests/total_arrests) %>%
   filter(convicted == 1)
 data_state_nonEUCA[is.na(data_state_nonEUCA$ratio), "ratio"] = 0
-
-data_allregion <- aggregate_data(trajectory, c("region", "window", "convicted"), "pop_MPI", agg_noneuca = FALSE) %>% 
-  group_by(window, region) %>% 
-  mutate(total_arrests = sum(n_arrests),
-         ratio = n_arrests/total_arrests) %>%
-  filter(convicted == 1)
-data_allregion[is.na(data_allregion$ratio), "ratio"] = 0
 
 data_nonEUCA <- aggregate_data(trajectory, c("region", "window", "convicted"), "pop_MPI", agg_noneuca = TRUE) %>% 
   group_by(window, region) %>% 
@@ -482,6 +479,118 @@ data_nonEUCA <- aggregate_data(trajectory, c("region", "window", "convicted"), "
   filter(convicted == 1)
 data_nonEUCA[is.na(data_nonEUCA$ratio), "ratio"] = 0
 
-arrange_fig1(data_allregion, data_state_allregion, data_nonEUCA, data_state_nonEUCA, "linear", model_fml, wt_fml, "All Arrest Types", do_sensitivity = F)
-ggsave("../figures/supplement/hit_rate_all_types.png", width = 6.5, height = 6)
+arrange_fig1(data_nonEUCA, data_state_nonEUCA, 
+             data_nonEUCA_ca, data_state_nonEUCA_ca, 
+             data_nonEUCA_lea, data_state_nonEUCA_lea, 
+             "linear", model_fml, wt_fml, do_sensitivity = F)
+
+ggsave("../figures/supplement/hit_rate_analysis.pdf", width = 6.5, height = 9)
+```
+
+Table of average effect for hit rate analyses
+```{r}
+trajectory <- read_csv("../data/processed/glm_trajectory_type_threatlevel_convicted_ACS_MPI.csv") %>%
+  mutate(region = ifelse(region == "AFRICA", "Africa",
+                         ifelse(region == "ASIA", "Asia",
+                                ifelse(region == "CARIBBEAN", "Caribbean", region))))
+
+
+overall_results <- data.frame(Type = character(), Effect = character(), stringsAsFactors = FALSE)
+
+data_state_nonEUCA <- aggregate_data(trajectory, c("region", "window", "state", "convicted"), "pop_MPI", agg_noneuca = TRUE) %>% 
+  filter(window >= -1) %>% 
+  group_by(window, region, state) %>% 
+  mutate(total_arrests = sum(n_arrests),
+         ratio = n_arrests/total_arrests) %>%
+  filter(convicted == 1) 
+data_state_nonEUCA[is.na(data_state_nonEUCA$ratio), "ratio"] = 0
+
+mod <- feols(model_fml, data_state_nonEUCA, weights = wt_fml, cluster = ~state)
+states <- unique(data_state_nonEUCA$state)
+n_states <- length(states)
+mean_val <- mean(unname(coef(feols(model_fml, data = data_state_nonEUCA, weights = wt_fml, cluster = ~state))))
+
+jackknife_est <- sapply(states, function(dropped_state) {
+  sub_data <- subset(data_state_nonEUCA, state != dropped_state)
+  mean(unname(coef(feols(model_fml, data = sub_data, weights = wt_fml, cluster = ~state))))
+})
+
+var = sum((jackknife_est - mean_val)^2)*(n_states-1)/(n_states)
+se = sqrt(var)
+z = mean_val/se
+overall_results <- rbind(overall_results, data.frame(
+  Type = "All",
+  Effect = sprintf("%.2f [%.2f, %.2f]", mean_val, mean_val-1.96*se, mean_val+1.96*se)
+))
+
+```
+
+```{r}
+trajectory <- read_csv("../data/processed/glm_trajectory_type_threatlevel_convicted_ACS_MPI.csv") %>%
+  mutate(region = ifelse(region == "AFRICA", "Africa",
+                         ifelse(region == "ASIA", "Asia",
+                                ifelse(region == "CARIBBEAN", "Caribbean", region)))) %>% 
+  filter(method == "CA")
+
+data_state_nonEUCA <- aggregate_data(trajectory, c("region", "window", "state", "convicted"), "pop_MPI", agg_noneuca = TRUE) %>% 
+  filter(window >= -1) %>% 
+  group_by(window, region, state) %>% 
+  mutate(total_arrests = sum(n_arrests),
+         ratio = n_arrests/total_arrests) %>%
+  filter(convicted == 1) 
+data_state_nonEUCA[is.na(data_state_nonEUCA$ratio), "ratio"] = 0
+
+mod <- feols(model_fml, data_state_nonEUCA, weights = wt_fml, cluster = ~state)
+states <- unique(data_state_nonEUCA$state)
+n_states <- length(states)
+mean_val <- mean(unname(coef(feols(model_fml, data = data_state_nonEUCA, weights = wt_fml, cluster = ~state))))
+
+jackknife_est <- sapply(states, function(dropped_state) {
+  sub_data <- subset(data_state_nonEUCA, state != dropped_state)
+  mean(unname(coef(feols(model_fml, data = sub_data, weights = wt_fml, cluster = ~state))))
+})
+
+var = sum((jackknife_est - mean_val)^2)*(n_states-1)/(n_states)
+se = sqrt(var)
+z = mean_val/se
+overall_results <- rbind(overall_results, data.frame(
+  Type = "Community",
+  Effect = sprintf("%.2f [%.2f, %.2f]", mean_val, mean_val-1.96*se, mean_val+1.96*se)
+))
+```
+
+```{r}
+trajectory <- read_csv("../data/processed/glm_trajectory_type_threatlevel_convicted_ACS_MPI.csv") %>%
+  mutate(region = ifelse(region == "AFRICA", "Africa",
+                         ifelse(region == "ASIA", "Asia",
+                                ifelse(region == "CARIBBEAN", "Caribbean", region)))) %>% 
+  filter(method == "LEA")
+
+data_state_nonEUCA <- aggregate_data(trajectory, c("region", "window", "state", "convicted"), "pop_MPI", agg_noneuca = TRUE) %>% 
+  filter(window >= -1) %>% 
+  group_by(window, region, state) %>% 
+  mutate(total_arrests = sum(n_arrests),
+         ratio = n_arrests/total_arrests) %>%
+  filter(convicted == 1) 
+data_state_nonEUCA[is.na(data_state_nonEUCA$ratio), "ratio"] = 0
+
+mod <- feols(model_fml, data_state_nonEUCA, weights = wt_fml, cluster = ~state)
+states <- unique(data_state_nonEUCA$state)
+n_states <- length(states)
+mean_val <- mean(unname(coef(feols(model_fml, data = data_state_nonEUCA, weights = wt_fml, cluster = ~state))))
+
+jackknife_est <- sapply(states, function(dropped_state) {
+  sub_data <- subset(data_state_nonEUCA, state != dropped_state)
+  mean(unname(coef(feols(model_fml, data = sub_data, weights = wt_fml, cluster = ~state))))
+})
+
+var = sum((jackknife_est - mean_val)^2)*(n_states-1)/(n_states)
+se = sqrt(var)
+z = mean_val/se
+overall_results <- rbind(overall_results, data.frame(
+  Type = "LEA",
+  Effect = sprintf("%.2f [%.2f, %.2f]", mean_val, mean_val-1.96*se, mean_val+1.96*se)
+))
+
+overall_results
 ```

@@ -25,124 +25,136 @@ library(patchwork)
 
 
 ```{r, echo = F}
-trajectory <- read_csv("../data/processed/glm_trajectory_type_threatlevel_convicted_ACS_MPI.csv") 
+trajectory <- read_csv("../data/processed/glm_trajectory_type_threatlevel_convicted_ACS_MPI.csv")
 sum(trajectory$n_arrests)
 
-days_pre_period = abs(min(trajectory$window)) * 60
-days_post_period = (max(trajectory$window) + 1) * 60 + 1
+trajectory_ca <- trajectory %>%
+  filter(method == "CA")
 
-trajectory <- trajectory %>%
-  mutate(conv_method = ifelse(method == "LEA", 
-                              ifelse(convicted == 1, "LEA_conv", "LEA_nonconv"),
-                              ifelse(method == "CA", 
-                                     ifelse(convicted == 1, "CA_conv", "CA_nonconv"),
-                                     NA)))
+days_pre_period  <- abs(min(trajectory_ca$window)) * 60
+days_post_period <- (max(trajectory_ca$window) + 1) * 60
 
-trajectory <- trajectory %>%
-  filter(method == "CA") %>%
-  select(state, region, window, conv_method, n_arrests, pop_MPI)
-
-conv_method_state <- trajectory %>%
+window_level <- trajectory_ca %>%
   filter(window >= -1) %>%
+  mutate(
+    conv_method = ifelse(convicted == 1, "CA_conv", "CA_nonconv")
+  ) %>%
+  group_by(region, state, window, conv_method) %>%
+  select(-threat_level, method) %>% 
+  summarize(
+    pop_MPI = first(pop_MPI),
+    n_arrests = sum(n_arrests),
+    .groups = "drop"
+  )
+
+conv_method_state <- window_level %>%
   mutate(window = ifelse(window >= 0, 0, -1)) %>%
   group_by(region, state, window, conv_method) %>%
-  summarize(pop_MPI = sum(pop_MPI), 
-            n_arrests = sum(n_arrests)) %>%
-  mutate(region = ifelse(region == "EUCA", "EUCA", "nonEUCA")) %>%
-  group_by(region, state, window, conv_method) %>%
-  summarize(pop_MPI = sum(pop_MPI), 
-            n_arrests = sum(n_arrests)) %>%
-  group_by(window, region, state, conv_method, pop_MPI) %>%
-  summarize(n_arrests = sum(n_arrests),
-            ratio = sum(n_arrests)/sum(pop_MPI)*1000,
-            ratio_annualized = sum(n_arrests)/sum(pop_MPI)*1000*ifelse(window == 0, 60/days_post_period, 1)) 
-1 per 2 days means 3 in 6 days
-wt_fml <- as.formula("~ pop_MPI")
-model_fml <- as.formula(
-  paste0("ratio_annualized ~ i(window, region, ref = -1, ref2 = 'EUCA') | region + window")
+  summarize(
+    pop_MPI = mean(pop_MPI),
+    n_arrests = sum(n_arrests),
+    .groups = "drop"
+  ) %>%
+  complete(
+    nesting(region, state, pop_MPI),
+    window = c(-1, 0),
+    conv_method = c("CA_conv", "CA_nonconv"),
+    fill = list(n_arrests = 0)
+  ) %>%
+  mutate(region = ifelse(region == "EUCA", "EUCA", "nonEUCA")) %>% 
+  group_by(region, window, state, conv_method) %>% 
+  summarize(pop_MPI = sum(pop_MPI),
+    n_arrests = sum(n_arrests),
+    .groups = "drop") %>% 
+  mutate(
+    ratio = (n_arrests / pop_MPI) * 1000,
+    ratio_annualized = ratio * ifelse(window == 0, 60 / days_post_period, 1),
+    post = as.integer(window == 0),
+    non_euca = as.integer(region == "nonEUCA"),
+    is_nonconv = as.integer(conv_method == "CA_nonconv")
+  )
+
+ddd_model <- feols(
+  ratio_annualized ~ post:non_euca + post:non_euca:is_nonconv |
+    region^conv_method + window^conv_method,
+  data = conv_method_state,
+  weights = ~ pop_MPI,
+  cluster = ~ state
 )
 
-return_p_value <- function(data){
-  states <- unique(data$state)
-  n_states <- length(states)
-  
-  coef_nonconv <- coef(feols(model_fml, data %>% filter(conv_method == "CA_nonconv"), weights = wt_fml, cluster = ~state)) 
-  coef_conv <- coef(feols(model_fml, data %>% filter(conv_method == "CA_conv"), weights = wt_fml, cluster = ~state))
-  mean = unname(coef_nonconv - coef_conv)
-  jackknife_est_matrix <- t(sapply(states, function(dropped_state) {
-    sub_data <- subset(data, state != dropped_state)
-    coef_nonconv <- coef(feols(model_fml, sub_data %>% filter(conv_method == "CA_nonconv"), weights = wt_fml, cluster = ~state)) 
-    coef_conv <- coef(feols(model_fml, sub_data %>% filter(conv_method == "CA_conv"), weights = wt_fml, cluster = ~state))
-    coef_nonconv - coef_conv
-  }))
-  
-  var = sum((jackknife_est_matrix - mean)^2)*(n_states-1)/(n_states)
-  se = sqrt(var)
-  z = mean/se
-  print(pnorm(-abs(z))*2)
-  print(c(mean, mean - 1.96*se, mean + 1.96*se))
-}
+summary(ddd_model)
 
-return_p_value(conv_method_state)
+ddd_term <- "post:non_euca:is_nonconv"
+est <- coef(ddd_model)[ddd_term]
+ci <- confint(ddd_model)[ddd_term, ]
+
+print(unname(c(est, ci[1], ci[2])))
 ```
 
 ```{r, echo = F}
-trajectory <- read_csv("../data/processed/glm_trajectory_type_threatlevel_convicted_ACS_MPI.csv") 
+trajectory <- read_csv("../data/processed/glm_trajectory_type_threatlevel_convicted_ACS_MPI.csv")
 sum(trajectory$n_arrests)
 
-trajectory <- trajectory %>%
-  mutate(conv_method = ifelse(method == "LEA", 
-                              ifelse(convicted == 1, "LEA_conv", "LEA_nonconv"),
-                              ifelse(method == "CA", 
-                                     ifelse(convicted == 1, "CA_conv", "CA_nonconv"),
-                                     NA)))
+trajectory_ca <- trajectory %>%
+  filter(method == "LEA")
 
-trajectory <- trajectory %>%
-  filter(method == "LEA") %>%
-  select(state, region, window, conv_method, n_arrests, pop_MPI)
+days_pre_period  <- abs(min(trajectory_ca$window)) * 60
+days_post_period <- (max(trajectory_ca$window) + 1) * 60
 
-conv_method_state <- trajectory %>%
+window_level <- trajectory_ca %>%
   filter(window >= -1) %>%
+  mutate(
+    conv_method = ifelse(convicted == 1, "LEA_conv", "LEA_nonconv")
+  ) %>%
+  group_by(region, state, window, conv_method) %>%
+  select(-threat_level, method) %>% 
+  summarize(
+    pop_MPI = first(pop_MPI),
+    n_arrests = sum(n_arrests),
+    .groups = "drop"
+  )
+
+conv_method_state <- window_level %>%
   mutate(window = ifelse(window >= 0, 0, -1)) %>%
   group_by(region, state, window, conv_method) %>%
+  summarize(
+    pop_MPI = mean(pop_MPI),
+    n_arrests = sum(n_arrests),
+    .groups = "drop"
+  ) %>%
+  complete(
+    nesting(region, state, pop_MPI),
+    window = c(-1, 0),
+    conv_method = c("LEA_conv", "LEA_nonconv"),
+    fill = list(n_arrests = 0)
+  ) %>%
+  mutate(region = ifelse(region == "EUCA", "EUCA", "nonEUCA")) %>% 
+  group_by(region, window, state, conv_method) %>% 
   summarize(pop_MPI = sum(pop_MPI),
-            n_arrests = sum(n_arrests)) %>%
-  mutate(region = ifelse(region == "EUCA", "EUCA", "nonEUCA")) %>%
-  group_by(region, state, window, conv_method) %>%
-  summarize(pop_MPI = sum(pop_MPI), 
-            n_arrests = sum(n_arrests)) %>%
-  group_by(window, region, state, conv_method, pop_MPI) %>%
-  summarize(n_arrests = sum(n_arrests),
-            ratio = sum(n_arrests)/sum(pop_MPI)*1000,
-            ratio_annualized = sum(n_arrests)/sum(pop_MPI)*1000*ifelse(window == 0, 60/days_post_period, 1)) 
-  
-wt_fml <- as.formula("~ pop_MPI")
-model_fml <- as.formula(
-  paste0("ratio_annualized ~ i(window, region, ref = -1, ref2 = 'EUCA') | region + window")
+    n_arrests = sum(n_arrests),
+    .groups = "drop") %>% 
+  mutate(
+    ratio = (n_arrests / pop_MPI) * 1000,
+    ratio_annualized = ratio * ifelse(window == 0, 60 / days_post_period, 1),
+    post = as.integer(window == 0),
+    non_euca = as.integer(region == "nonEUCA"),
+    is_nonconv = as.integer(conv_method == "LEA_nonconv")
+  )
+
+ddd_model <- feols(
+  ratio_annualized ~ post:non_euca + post:non_euca:is_nonconv |
+    region^conv_method + window^conv_method,
+  data = conv_method_state,
+  weights = ~ pop_MPI,
+  cluster = ~ state
 )
 
-return_p_value <- function(data){
-  states <- unique(data$state)
-  n_states <- length(states)
-  
-  coef_nonconv <- coef(feols(model_fml, data %>% filter(conv_method == "LEA_nonconv"), weights = wt_fml, cluster = ~state)) 
-  coef_conv <- coef(feols(model_fml, data %>% filter(conv_method == "LEA_conv"), weights = wt_fml, cluster = ~state))
-  mean = unname(coef_nonconv - coef_conv)
-  
-  jackknife_est_matrix <- t(sapply(states, function(dropped_state) {
-    sub_data <- subset(data, state != dropped_state)
-    coef_nonconv <- coef(feols(model_fml, sub_data %>% filter(conv_method == "LEA_nonconv"), weights = wt_fml, cluster = ~state)) 
-    coef_conv <- coef(feols(model_fml, sub_data %>% filter(conv_method == "LEA_conv"), weights = wt_fml, cluster = ~state))
-    coef_nonconv - coef_conv
-  }))
-  
-  var = sum((jackknife_est_matrix - mean)^2)*(n_states-1)/(n_states)
-  se = sqrt(var)
-  z = mean/se
-  print(pnorm(-abs(z))*2)
-  print(c(mean, mean - 1.96*se, mean + 1.96*se))
-}
+summary(ddd_model)
 
-return_p_value(conv_method_state)
+ddd_term <- "post:non_euca:is_nonconv"
+est <- coef(ddd_model)[ddd_term]
+ci <- confint(ddd_model)[ddd_term, ]
+
+print(unname(c(est, ci[1], ci[2])))
 ```
 

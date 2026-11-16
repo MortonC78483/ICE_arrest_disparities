@@ -105,7 +105,7 @@ trajectory <- read_csv("../data/processed/glm_trajectory_type_threatlevel_convic
   filter(method == "LEA" & convicted == 0)
 
 n_days_pre <- abs(min(trajectory$window)) * 60
-n_days_post <- (max(trajectory$window) + 1) * 60 + 1
+n_days_post <- (max(trajectory$window) + 1) * 60
 
 trajectory_agg <- aggregate_data(trajectory, c("region", "aor", "window"), "pop_MPI", TRUE) %>%
   mutate(window = ifelse(window < 0, -1, 0)) %>%

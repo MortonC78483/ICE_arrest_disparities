@@ -222,13 +222,7 @@ event_study_plot <- function(estimates, pal, model_type = c("linear", "poisson")
     estimates <- estimates |> 
       dplyr::mutate(conv_status = dplyr::if_else(stringr::str_detect(conv_method, "No Conviction"), "No Conviction", "Conviction"))
   }
-  #interaction_colors <- c(
-  #  "EUCA No Conviction"    = "#555555",
-  #  "EUCA Conviction"       = "#BBBBBB",
-  #  "Non-EUCA No Conviction" = "#004488",
-  #  "Non-EUCA Conviction"    = "#6699CC"
-  #)
-  #"Non-EUCA Conviction", "Non-EUCA No Conviction"
+
   conv_methods <- unique(estimates$conv_method)
   estimates <- estimates %>%
   mutate(
@@ -246,9 +240,6 @@ event_study_plot <- function(estimates, pal, model_type = c("linear", "poisson")
   plt <- ggplot(estimates, aes(x = window, y = est, group = conv_method, color = conv_method, ymin = lower, ymax = upper)) +
     geom_hline(yintercept = baseline, color = "grey50") +
     geom_vline(xintercept = -0.5, linetype = "dashed", color = "grey50") +
-    #geom_line(linewidth = 0.8, position = position_dodge(0.3)) +
-    #geom_errorbar(position = position_dodge(0.3)) +
-    #geom_point(size = 2.5, position = position_dodge(0.3), aes(shape = conv_method)) +
     geom_line(data = df_bottom, aes(x = window_dodged, y = est, group = conv_method), linewidth = 0.8) +
     geom_errorbar(data = df_bottom, aes(x = window_dodged, ymin = lower, ymax = upper)) +
     geom_point(data = df_bottom, aes(x = window_dodged, y = est, shape = conv_method), size = 2.5) +
@@ -280,6 +271,7 @@ fit_diffindiff <- function(data, model_fml, extra_fml, model_type = c("linear", 
     int_val <- coef(mod_int)[grepl("window::-1:", names(coef(mod_int)))]
     if(length(int_val) == 0) int_val <- 0 # Fallback in case of missing baseline
 
+    print(paste0("Sensitivity analysis for: ", cur_method))
     jackknife_supt(mod, model_fml, d_filt, model_type, extra_fml, do_se, do_sensitivity, m_vals = m_vals) %>%
       mutate(conv_method = cur_method, period_minus_1_val = int_val)
   })
@@ -288,80 +280,7 @@ fit_diffindiff <- function(data, model_fml, extra_fml, model_type = c("linear", 
   return(res)
 }
 
-arrange_figure2 <- function(conv_method, conv_method_state, model_fml, wt_fml, pois_model_fml, offset_fml, title = "", do_se = TRUE, do_sensitivity = FALSE, m_vals = c()) {
-  interaction_colors <- c(
-    "EUCA No Conviction"    = "#555555",
-    "EUCA Conviction"       = "#BBBBBB",
-    "Non-EUCA No Conviction" = "#004488",
-    "Non-EUCA Conviction"    = "#6699CC"
-  )
-  
-  did_colors <- c(
-    "CA No Conviction"  = "#004488", 
-    "CA Conviction"     = "#6699CC",
-    "LEA No Conviction" = "#004488", 
-    "LEA Conviction"    = "#6699CC",
-    "No Conviction"     = "#004488",
-    "Conviction"        = "#6699CC"
-  )
-
-  conv_method <- conv_method %>% 
-    mutate(
-      conv_status = if_else(str_detect(conv_method, "No Conviction"), "No Conviction", "Conviction"),
-      color_group = paste0(region, " ", conv_status) 
-    )
-    
-  message("Fitting linear models...")
-  lin_estimates <- fit_diffindiff(conv_method_state, model_fml, wt_fml, "linear", do_se, do_sensitivity, m_vals) %>%
-    mutate(conv_status = if_else(str_detect(conv_method, "No Conviction"), "No Conviction", "Conviction"))
-    
-  message("Fitting poisson models...")
-  pois_estimates <- fit_diffindiff(conv_method_state, pois_model_fml, offset_fml, "poisson", do_se, FALSE, m_vals) %>%
-    mutate(conv_status = if_else(str_detect(conv_method, "No Conviction"), "No Conviction", "Conviction"))
-
-  pA <- plot_predictions(conv_method, interaction_colors, 0, "linear") + 
-    ylab("Arrests per 1k") +
-        theme(legend.direction = "horizontal")+
-     labs(tag = "a") + 
-    theme(plot.tag = element_text(size = 14))+
-    guides(color = guide_legend(nrow = 2))
-
-  pB <- event_study_plot(lin_estimates, did_colors, model_type = "linear", baseline = 0) + 
-  ylab("Non-EUCA - EUCA Arrests per 1k\nrelative to period -1") +
-  theme(legend.position = "none")+ 
-    labs(tag = "b") + 
-    theme(plot.tag = element_text(size = 14,  margin = margin(r = 10)))
-
-  pC <- plot_predictions(conv_method %>% mutate(ratio = n_arrests), interaction_colors, 0, "poisson") +
-    ylab("Total Arrests\n(Log Scale)") +
-    theme(legend.position = "none")+ 
-    labs(tag = "c") + 
-    theme(plot.tag = element_text(size = 14))
-      
-  pD <- event_study_plot(pois_estimates, did_colors, model_type = "poisson", baseline = 1) + 
-    ylab("Non-EUCA / EUCA Arrests\nrelative to period -1") +
-    theme(legend.position = "none")+ labs(tag = "d") + 
-    theme(plot.tag = element_text(size = 14, margin = margin(r = 10)))
-  
-  left_column <- (pA / pC) + 
-    plot_layout(axis_titles = "collect")
-  right_column <- (pB / pD) + 
-    plot_layout(axis_titles = "collect")
-  
-  combined_plot <- (left_column | right_column) + 
-    plot_layout(guides = "collect") +
-    plot_annotation(
-    title = title, 
-    theme = theme(
-      plot.title = element_text(size = 14, face = "bold", hjust = 0.5), 
-      legend.position = "bottom"
-    ))
-    
-  return(combined_plot)
-}
-
-
-arrange_figure2_v2 <- function(conv_method_ca, conv_method_state_ca, 
+arrange_figure2 <- function(conv_method_ca, conv_method_state_ca, 
                                conv_method_lea, conv_method_state_lea, 
                                model_fml, wt_fml, pois_model_fml, offset_fml, title = "", do_se = TRUE, do_sensitivity = FALSE, m_vals = c()) {
   interaction_colors <- c(
@@ -403,7 +322,7 @@ arrange_figure2_v2 <- function(conv_method_ca, conv_method_state_ca,
     mutate(conv_status = if_else(str_detect(conv_method, "No Conviction"), "No Conviction", "Conviction"))
 
   pA <- plot_predictions(conv_method_ca, interaction_colors, 0, "linear") + 
-    ylab("Communtiy Arrests\nper 1k") +
+    ylab("Community Arrests\nper 1k") +
         theme(legend.direction = "horizontal")+
      labs(tag = "a") + 
     theme(plot.tag = element_text(size = 14),
@@ -503,82 +422,6 @@ shape_palette <- c(
   )
 ```
 
-```{r, include = F}
-# make_figure_suite <- function(data, save_folder = "supplement", save_prefix = "", do_sensitivity = F, m_vals = c()){
-#   conv_method <- aggregate_data(data, c("conv_method", "region", "window"), 
-#                                         "pop_MPI", 
-#                                         TRUE) %>%
-#     filter(!is.na(conv_method)) %>% 
-#     filter(startsWith(conv_method, "CA"))
-# 
-#   conv_method_state <- aggregate_data(data, c("conv_method", "region", "state", "window"), 
-#                                         "pop_MPI", 
-#                                         TRUE) %>%
-#     filter(!is.na(conv_method)) %>% 
-#     filter(startsWith(conv_method, "CA"))
-# 
-#   # figure 2 MPI denoms (CA)
-#   arrange_figure2(conv_method, conv_method_state, 
-#                 model_fml, wt_fml, pois_model_fml, offset_fml, 
-#                 "", do_sensitivity = do_sensitivity, m_vals = m_vals)
-#   ggsave(paste0("../figures/", save_folder, "/", save_prefix, "CA_mpi_denoms_fig2.pdf"), height = 5.5, width = 6.5) 
-#   
-#   # figure 2 MPI denoms (LEA)
-#   conv_method <- aggregate_data(data, c("conv_method", "region", "window"), 
-#                                         "pop_MPI", 
-#                                         TRUE) %>%
-#     filter(!is.na(conv_method)) %>% 
-#     filter(startsWith(conv_method, "LEA"))
-# 
-#   conv_method_state <- aggregate_data(data, c("conv_method", "region", "state", "window"), 
-#                                         "pop_MPI", 
-#                                         TRUE) %>%
-#     filter(!is.na(conv_method)) %>% 
-#     filter(startsWith(conv_method, "LEA"))
-#   
-#   arrange_figure2(conv_method, conv_method_state, 
-#                 model_fml, wt_fml, pois_model_fml, offset_fml, 
-#                 "", do_sensitivity = do_sensitivity, m_vals =m_vals )
-#   
-#   ggsave(paste0("../figures/supplement/", save_prefix, "LEA_mpi_denoms_fig2.pdf"), height = 5.5, width = 6.5)
-#   
-#   # figure 2 ACS denoms (CA)
-#   conv_method <- aggregate_data(data, c("conv_method", "region", "window"), 
-#                                         "pop_ACS", 
-#                                         TRUE) %>%
-#     filter(!is.na(conv_method)) %>% 
-#     filter(startsWith(conv_method, "CA"))
-# 
-#   conv_method_state <- aggregate_data(data, c("conv_method", "region", "state", "window"), 
-#                                         "pop_ACS", 
-#                                         TRUE) %>%
-#     filter(!is.na(conv_method)) %>% 
-#     filter(startsWith(conv_method, "CA"))
-# 
-#   arrange_figure2(conv_method, conv_method_state, 
-#                 model_fml, wt_fml, pois_model_fml, offset_fml, 
-#                 "", do_sensitivity = F)
-#   ggsave(paste0("../figures/supplement/", save_prefix, "CA_acs_denoms_fig2.pdf"), height = 5.5, width = 6.5)
-# 
-#   conv_method <- aggregate_data(data, c("conv_method", "region", "window"), 
-#                                         "pop_ACS", 
-#                                         TRUE) %>%
-#     filter(!is.na(conv_method)) %>% 
-#     filter(startsWith(conv_method, "LEA"))
-# 
-#   conv_method_state <- aggregate_data(data, c("conv_method", "region", "state", "window"), 
-#                                         "pop_ACS", 
-#                                         TRUE) %>%
-#     filter(!is.na(conv_method)) %>% 
-#     filter(startsWith(conv_method, "LEA"))
-#  
-#   arrange_figure2(conv_method, conv_method_state, 
-#                 model_fml, wt_fml, pois_model_fml, offset_fml, 
-#                 "", do_sensitivity = F)
-#   ggsave(paste0("../figures/supplement/", save_prefix, "LEA_acs_denoms_fig2.pdf"), height = 5.5, width = 6.5)
-# }
-
-```
 
 ```{r}
 make_figure_suite <- function(data, save_folder = "supplement", save_prefix = "", do_sensitivity = F, m_vals = c()){
@@ -607,7 +450,7 @@ make_figure_suite <- function(data, save_folder = "supplement", save_prefix = ""
     filter(startsWith(conv_method, "LEA"))
 
   # figure 2 MPI denoms (CA)
-  arrange_figure2_v2(conv_method_ca, conv_method_state_ca, 
+  arrange_figure2(conv_method_ca, conv_method_state_ca, 
                   conv_method_lea, conv_method_state_lea,
                 model_fml, wt_fml, pois_model_fml, offset_fml, 
                 "", do_sensitivity = do_sensitivity, m_vals = m_vals)
@@ -638,7 +481,7 @@ make_figure_suite <- function(data, save_folder = "supplement", save_prefix = ""
     filter(!is.na(conv_method)) %>% 
     filter(startsWith(conv_method, "LEA"))
 
-  arrange_figure2_v2(conv_method_ca, conv_method_state_ca, 
+  arrange_figure2(conv_method_ca, conv_method_state_ca, 
                      conv_method_lea, conv_method_state_lea,
                 model_fml, wt_fml, pois_model_fml, offset_fml, 
                 "", do_sensitivity = F)
@@ -656,7 +499,7 @@ trajectory <- trajectory %>%
                               ifelse(method == "CA", 
                                      ifelse(convicted == 1, "CA Conviction", "CA No Conviction"),
                                      NA)))
-make_figure_suite(trajectory, save_folder = "main_text", do_sensitivity = F, m_vals = c(.3, .4, 1.1, 1.2, 1.3, 1.4, 1.9, 2))
+make_figure_suite(trajectory, save_folder = "main_text", do_sensitivity = T, m_vals = c(.3, .4, 1.1, 1.2, 1.3, 1.4, 1.9, 2))
 ```
 
 Test for significance
